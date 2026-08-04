@@ -45,27 +45,21 @@ async function startServer() {
 
       const prompt = `
 Current datetime reference: ${nowStr}.
-${previousDraft ? `Previous Pending Task Draft: ${JSON.stringify(previousDraft)}` : 'No previous draft.'}
+${previousDraft ? `Previous Pending Draft: ${JSON.stringify(previousDraft)}` : 'No previous draft.'}
 User incoming message: "${text.trim()}"
 
-Role: You are J.A.X. (Jagadeesh Agent X), the executive AI assistant for an Android task app.
-Task: Evaluate the task details for completeness.
-Essential information required for a complete task record:
-1. Title (actionable summary of what needs to be done)
-2. Category (e.g., Work, Personal, Health, Urgent, Finance, Learning)
-3. Priority ("high", "medium", or "low")
-4. Deadline (explicit or relative date/time like "tomorrow 5pm", "Friday 10am", "by 3pm", "August 15").
+Role: You are J.A.X. (Jagadeesh Agent X), executive AI assistant for an Android app.
+Task: Determine if the user message represents an actionable TASK (e.g., "Schedule doctor call", "Pay electricity bill tomorrow") OR a personal FACT/MEMORY (e.g., "My car insurance policy number is 98122", "Wife's favorite flower is Peony").
 
-Rules for Conversational Verification Loop:
-- If a previous draft was provided, merge the user's new message details into the previous draft.
-- If essential information like DEADLINE is missing, OR priority/details are vague, DO NOT set isComplete to true.
-- When isComplete is false:
-  - Generate jarvisReply as a concise, polite counter-question in J.A.X. character (e.g. "I can schedule that electrician call, Jagadeesh. What date and time works best for you?").
-  - Fill pendingDraft with whatever information is extracted so far.
-  - Provide clarificationOptions chips for quick user tap responses.
-- When isComplete is true (all essential details present, or user just answered missing field):
-  - Generate jarvisReply as a polished, respectful confirmation in J.A.X. character (e.g. "Right away, Jagadeesh. I have scheduled 'Call electrician' for tomorrow at 3:00 PM with High priority and logged it to your Room database.").
-  - Populate taskCandidate with final complete details.
+Structured Classification Rules:
+1. If itemType is "MEMORY":
+   - Extract title, category (e.g., Personal, Finance, Work, Tech, Health), and detailed content/value.
+   - Set isComplete to true.
+   - Generate jarvisReply as a courteous confirmation (e.g., "I have logged that to your Memory Vault, Jagadeesh.").
+2. If itemType is "TASK":
+   - Check if essential task details (Title, Category, Priority, Deadline) are present.
+   - If missing deadline or essential info, set isComplete to false, fill task draft, and generate a polite clarification counter-question in jarvisReply.
+   - If complete, set isComplete to true and confirm in jarvisReply (e.g., "Right away, Jagadeesh. Scheduled task in your Room database.").
 `;
 
       res.setHeader('Content-Type', 'text/event-stream');
@@ -81,18 +75,15 @@ Rules for Conversational Verification Loop:
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              isComplete: { type: Type.BOOLEAN, description: 'True if task has clear title, category, priority, and deadline. False if crucial info is missing.' },
-              jarvisReply: { type: Type.STRING, description: 'Concise spoken counter-question if incomplete, or confirmation if complete.' },
-              title: { type: Type.STRING, description: 'Task title' },
-              category: { type: Type.STRING, description: 'Category name' },
-              priority: { type: Type.STRING, description: 'high, medium, or low' },
-              deadline: { type: Type.STRING, description: 'ISO 8601 timestamp string or empty/null' },
-              description: { type: Type.STRING, description: 'Optional extra task notes' },
-              missingFields: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'Fields missing like deadline or category',
-              },
+              itemType: { type: Type.STRING, description: 'TASK or MEMORY' },
+              isComplete: { type: Type.BOOLEAN, description: 'True if details are clear and ready to insert into Room DB' },
+              jarvisReply: { type: Type.STRING, description: 'Polite spoken response by J.A.X.' },
+              title: { type: Type.STRING, description: 'Task or Memory title' },
+              category: { type: Type.STRING, description: 'Work, Personal, Finance, Health, Urgent, Learning, Tech' },
+              priority: { type: Type.STRING, description: 'high, medium, or low for tasks' },
+              deadline: { type: Type.STRING, description: 'ISO 8601 timestamp string or empty for tasks' },
+              description: { type: Type.STRING, description: 'Details for memory or task description' },
+              details: { type: Type.STRING, description: 'Detailed memory facts' },
               clarificationOptions: {
                 type: Type.ARRAY,
                 items: {
@@ -106,7 +97,7 @@ Rules for Conversational Verification Loop:
                 },
               },
             },
-            required: ['isComplete', 'jarvisReply', 'title', 'category', 'priority'],
+            required: ['itemType', 'isComplete', 'jarvisReply', 'title', 'category'],
           },
         },
       });

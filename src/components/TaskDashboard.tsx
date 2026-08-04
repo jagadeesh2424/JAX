@@ -280,14 +280,10 @@ export const TaskDashboard: React.FC<TaskDashboardProps> = ({
                       >
                         {task.title}
                       </h4>
-                      {getPriorityBadge(task.priority)}
-                      <span className="text-[10px] bg-slate-700/80 text-slate-300 border border-slate-600/60 px-2 py-0.5 rounded-full font-medium">
-                        {task.category}
-                      </span>
                     </div>
 
                     {/* Deadline & Subtask Status */}
-                    <div className="flex items-center space-x-3 mt-2 text-[11px] text-slate-400 flex-wrap gap-y-1">
+                    <div className="flex items-center space-x-3 mt-1.5 text-[11px] text-slate-400 flex-wrap gap-y-1">
                       {task.deadline && (
                         <div
                           className={`flex items-center space-x-1 px-2 py-0.5 rounded-md font-medium ${
@@ -343,6 +339,19 @@ export const TaskDashboard: React.FC<TaskDashboardProps> = ({
                 {/* Expanded Subtasks & Description Area */}
                 {isExpanded && (
                   <div className="mt-3 pt-3 border-t border-slate-700/80 bg-slate-900/70 p-3 rounded-xl space-y-2.5">
+                    {/* Category & Priority Details */}
+                    <div className="flex items-center space-x-3 pb-2 border-b border-slate-800/80 flex-wrap gap-y-1">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="text-[10px] text-slate-400 font-medium">Category:</span>
+                        <span className="text-[10px] bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full font-semibold">
+                          {task.category}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="text-[10px] text-slate-400 font-medium">Priority:</span>
+                        {getPriorityBadge(task.priority)}
+                      </div>
+                    </div>
                     {task.description && (
                       <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">

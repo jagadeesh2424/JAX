@@ -14,7 +14,7 @@ import { formatRelativeTime } from './utils/dateUtils';
 import { Plus, X } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'calendar' | 'notes' | 'briefing' | 'room' | 'settings'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'memory'>('chat');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ title: string; body: string } | null>(null);
@@ -38,18 +38,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const triggerNotification = (title: string, body: string) => {
-    setNotification({ title, body });
-
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        new Notification(title, { body });
-      } catch (e) {
-        console.warn('Native notification suppressed by browser frame:', e);
-      }
-    }
-  };
-
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickTitle.trim()) return;
@@ -72,21 +60,18 @@ export default function App() {
   };
 
   const pendingTasks = tasks.filter((t) => t.status === 'pending');
-  const highPriorityTasks = pendingTasks.filter((t) => t.priority === 'high');
 
   return (
     <AndroidShell
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       pendingCount={pendingTasks.length}
-      highPriorityCount={highPriorityTasks.length}
-      unreadBriefing={false}
     >
       {/* Top Notification Toast Overlay */}
       <NotificationBanner
         notification={notification}
         onDismiss={() => setNotification(null)}
-        onOpenBriefing={() => setActiveTab('briefing')}
+        onOpenBriefing={() => setActiveTab('chat')}
       />
 
       {/* Screen Views */}
@@ -102,44 +87,18 @@ export default function App() {
         />
       )}
 
-      {activeTab === 'calendar' && (
-        <CalendarViewScreen
-          tasks={tasks}
-          onTasksChanged={() => {}}
-          onOpenQuickAddWithDate={(dateIso) => {
-            setQuickDeadline(dateIso.substring(0, 16));
-            setIsQuickAddOpen(true);
-          }}
-        />
-      )}
-
-      {activeTab === 'notes' && (
+      {activeTab === 'memory' && (
         <NotesScreen onTasksChanged={() => {}} />
-      )}
-
-      {activeTab === 'briefing' && (
-        <DailyBriefingModal
-          tasks={tasks}
-          onTriggerNotification={triggerNotification}
-        />
-      )}
-
-      {activeTab === 'room' && (
-        <RoomDbInspector onDataReset={() => {}} />
-      )}
-
-      {activeTab === 'settings' && (
-        <SettingsScreen onTasksChanged={() => {}} />
       )}
 
       {/* Quick Add Modal */}
       {isQuickAddOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-[#0D1117] border border-cyan-500/30 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <h3 className="text-sm font-bold text-slate-100 flex items-center space-x-2">
-                <Plus className="w-4 h-4 text-indigo-400" />
-                <span>Quick Add Task to Room DB</span>
+                <Plus className="w-4 h-4 text-cyan-400" />
+                <span className="font-mono">Quick Add Task to Room DB</span>
               </h3>
               <button
                 onClick={() => setIsQuickAddOpen(false)}
@@ -158,7 +117,7 @@ export default function App() {
                   onChange={(e) => setQuickTitle(e.target.value)}
                   placeholder="e.g., Submit project report"
                   required
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 outline-none focus:ring-1 focus:ring-cyan-500"
                 />
               </div>
 
@@ -168,14 +127,13 @@ export default function App() {
                   <select
                     value={quickCategory}
                     onChange={(e) => setQuickCategory(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-slate-100 outline-none"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-slate-100 outline-none"
                   >
                     <option value="Work">Work</option>
                     <option value="Personal">Personal</option>
+                    <option value="Finance">Finance</option>
                     <option value="Health">Health</option>
                     <option value="Urgent">Urgent</option>
-                    <option value="Finance">Finance</option>
-                    <option value="Learning">Learning</option>
                   </select>
                 </div>
 
@@ -184,7 +142,7 @@ export default function App() {
                   <select
                     value={quickPriority}
                     onChange={(e) => setQuickPriority(e.target.value as any)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-slate-100 outline-none"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-slate-100 outline-none"
                   >
                     <option value="high">🔴 High</option>
                     <option value="medium">🟠 Medium</option>
@@ -199,7 +157,7 @@ export default function App() {
                   type="datetime-local"
                   value={quickDeadline}
                   onChange={(e) => setQuickDeadline(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 outline-none"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 outline-none"
                 />
               </div>
 
@@ -213,7 +171,7 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-medium text-white rounded-xl transition cursor-pointer shadow-md shadow-indigo-600/20"
+                  className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-slate-950 rounded-xl transition cursor-pointer shadow-md shadow-cyan-600/20"
                 >
                   Save Task
                 </button>
