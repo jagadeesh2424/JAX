@@ -17,8 +17,8 @@ import {
 
 interface AndroidShellProps {
   children: React.ReactNode;
-  activeTab: 'chat' | 'dashboard' | 'calendar' | 'notes' | 'briefing' | 'settings';
-  setActiveTab: (tab: 'chat' | 'dashboard' | 'calendar' | 'notes' | 'briefing' | 'settings') => void;
+  activeTab: 'chat' | 'dashboard' | 'calendar' | 'memory' | 'briefing';
+  setActiveTab: (tab: 'chat' | 'dashboard' | 'calendar' | 'memory' | 'briefing') => void;
   pendingCount: number;
 }
 
@@ -150,15 +150,15 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('notes')}
+            onClick={() => setActiveTab('memory')}
             className={`flex-1 min-w-[48px] flex flex-col items-center justify-center py-1 px-1 rounded-xl transition cursor-pointer ${
-              activeTab === 'notes'
+              activeTab === 'memory'
                 ? 'bg-cyan-500/15 text-cyan-300 font-bold border border-cyan-500/30 shadow-sm shadow-cyan-500/10'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            <FileText className="w-4 h-4" />
-            <span className="text-[10px] mt-1 tracking-tight font-medium">Notes</span>
+            <Database className="w-4 h-4" />
+            <span className="text-[10px] mt-1 tracking-tight font-medium">Memory Vault</span>
           </button>
 
           <button
@@ -171,18 +171,6 @@ export const AndroidShell: React.FC<AndroidShellProps> = ({
           >
             <Bell className="w-4 h-4" />
             <span className="text-[10px] mt-1 tracking-tight font-medium">Briefing</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`flex-1 min-w-[48px] flex flex-col items-center justify-center py-1 px-1 rounded-xl transition cursor-pointer ${
-              activeTab === 'settings'
-                ? 'bg-cyan-500/15 text-cyan-300 font-bold border border-cyan-500/30 shadow-sm shadow-cyan-500/10'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span className="text-[10px] mt-1 tracking-tight font-medium">Settings</span>
           </button>
         </nav>
 

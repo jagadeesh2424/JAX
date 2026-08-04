@@ -14,7 +14,7 @@ import { formatRelativeTime } from './utils/dateUtils';
 import { Plus, X } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'calendar' | 'notes' | 'briefing' | 'settings'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'calendar' | 'memory' | 'briefing'>('chat');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ title: string; body: string } | null>(null);
@@ -99,7 +99,7 @@ export default function App() {
         />
       )}
 
-      {activeTab === 'notes' && (
+      {activeTab === 'memory' && (
         <NotesScreen onTasksChanged={loadTasks} />
       )}
 
@@ -108,10 +108,6 @@ export default function App() {
           tasks={tasks}
           onTriggerNotification={(title, body) => setNotification({ title, body })}
         />
-      )}
-
-      {activeTab === 'settings' && (
-        <SettingsScreen onTasksChanged={loadTasks} />
       )}
 
       {/* Quick Add Modal */}

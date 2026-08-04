@@ -6,7 +6,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,13 +33,14 @@ fun MainScreen(
     onSendMessage: (String) -> Unit,
     onToggleTask: (TaskEntity) -> Unit,
     onSearchFacts: (String) -> Unit,
-    onMicClick: () -> Unit
+    onMicClick: () -> Unit,
+    onSpeakBriefing: (String) -> Unit
 ) {
-    var activeTab by remember { mutableStateOf(0) } // 0: Omni-Chat, 1: Tasks, 2: Memory
+    var activeTab by remember { mutableStateOf(0) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing
 
     Scaffold(
         topBar = {
-            // Minimalist Header: "J.A.X. AI" + Green Active Dot
+            // Minimalist Header: "J.A.X. AI" + Active Dot
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -60,7 +64,7 @@ fun MainScreen(
             }
         },
         bottomBar = {
-            // Material 3 Navigation Bar with 3 Tabs
+            // Material 3 Navigation Bar supporting 6 main tabs
             NavigationBar(
                 containerColor = SurfaceDark,
                 contentColor = Color.White
@@ -68,22 +72,36 @@ fun MainScreen(
                 NavigationBarItem(
                     selected = activeTab == 0,
                     onClick = { activeTab = 0 },
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Omni-Chat") },
-                    label = { Text("Omni-Chat", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.Chat, contentDescription = "Chat") },
+                    label = { Text("Chat", fontSize = 10.sp) },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
                 )
                 NavigationBarItem(
                     selected = activeTab == 1,
                     onClick = { activeTab = 1 },
-                    icon = { Icon(Icons.Default.Checklist, contentDescription = "Task Dashboard") },
-                    label = { Text("Tasks", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.Checklist, contentDescription = "Tasks") },
+                    label = { Text("Tasks", fontSize = 10.sp) },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
                 )
                 NavigationBarItem(
                     selected = activeTab == 2,
                     onClick = { activeTab = 2 },
-                    icon = { Icon(Icons.Default.Memory, contentDescription = "Memory Vault") },
-                    label = { Text("Memory", fontSize = 11.sp) },
+                    icon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar") },
+                    label = { Text("Calendar", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 3,
+                    onClick = { activeTab = 3 },
+                    icon = { Icon(Icons.Default.Description, contentDescription = "Memory Vault") },
+                    label = { Text("Memory", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 4,
+                    onClick = { activeTab = 4 },
+                    icon = { Icon(Icons.Default.WbSunny, contentDescription = "Briefing") },
+                    label = { Text("Briefing", fontSize = 10.sp) },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
                 )
             }
@@ -97,7 +115,9 @@ fun MainScreen(
             when (activeTab) {
                 0 -> OmniChatScreen(messages = messages, onSendMessage = onSendMessage, onMicClick = onMicClick)
                 1 -> TaskDashboardScreen(tasks = tasks, onToggleTask = onToggleTask)
-                2 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts)
+                2 -> CalendarScreen(tasks = tasks, onToggleTask = onToggleTask)
+                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts)
+                4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing)
             }
         }
     }

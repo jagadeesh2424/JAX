@@ -91,6 +91,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onMicClick = {
                         voiceManager.startListening()
+                    },
+                    onSpeakBriefing = { text ->
+                        voiceManager.speak(text)
                     }
                 )
             }
