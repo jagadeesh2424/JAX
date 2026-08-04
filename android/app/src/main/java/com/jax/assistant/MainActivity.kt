@@ -72,6 +72,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onSpeakBriefing = { text ->
                         voiceManager.speak(text)
+                    },
+                    onStopSpeaking = {
+                        voiceManager.stopSpeaking()
                     }
                 )
             }

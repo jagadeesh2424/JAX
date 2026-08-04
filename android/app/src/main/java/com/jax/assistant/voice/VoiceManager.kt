@@ -58,6 +58,14 @@ class VoiceManager(
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jax_tts_id")
     }
 
+    fun stopSpeaking() {
+        tts?.stop()
+    }
+
+    fun isSpeaking(): Boolean {
+        return tts?.isSpeaking == true
+    }
+
     fun shutdown() {
         tts?.stop()
         tts?.shutdown()

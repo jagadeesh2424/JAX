@@ -4,12 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,18 +41,19 @@ fun MainScreen(
     onAddFact: (title: String, category: String, details: String) -> Unit,
     onUpdateApiKey: (String) -> Unit,
     onMicClick: () -> Unit,
-    onSpeakBriefing: (String) -> Unit
+    onSpeakBriefing: (String) -> Unit,
+    onStopSpeaking: () -> Unit
 ) {
     var activeTab by remember { mutableStateOf(0) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings
 
     Scaffold(
         topBar = {
-            // Minimalist Header: "J.A.X. AI" + Active Dot + Settings Gear
+            // Minimalist Header: "J.A.X. AI" + Status + Stop Voice Button + Settings Gear
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(PureDark)
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -73,12 +76,28 @@ fun MainScreen(
                     )
                 }
 
-                IconButton(onClick = { activeTab = 5 }) {
-                    Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = if (activeTab == 5) CyanAccent else Color.Gray
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Quick "Stop AI Voice" Pill Button
+                    Box(
+                        modifier = Modifier
+                            .background(Color.Red.copy(alpha = 0.2f), shape = RoundedCornerShape(16.dp))
+                            .clickable { onStopSpeaking() }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.VolumeOff, contentDescription = "Mute Voice", tint = Color.Red, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = "Mute", color = Color.Red, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    IconButton(onClick = { activeTab = 5 }) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = if (activeTab == 5) CyanAccent else Color.Gray
+                        )
+                    }
                 }
             }
         },
@@ -134,9 +153,15 @@ fun MainScreen(
             when (activeTab) {
                 0 -> OmniChatScreen(messages = messages, onSendMessage = onSendMessage, onMicClick = onMicClick)
                 1 -> TaskDashboardScreen(tasks = tasks, onToggleTask = onToggleTask, onAddTask = onAddTask)
-                2 -> CalendarScreen(tasks = tasks, onToggleTask = onToggleTask)
+                2 -> CalendarScreen(
+                    tasks = tasks,
+                    onToggleTask = onToggleTask,
+                    onAddTaskForDate = { title, category, priority, deadline ->
+                        onAddTask(title, category, priority, deadline)
+                    }
+                )
                 3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts, onAddFact = onAddFact)
-                4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing)
+                4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing, onStopSpeaking = onStopSpeaking)
                 5 -> SettingsScreen(
                     apiKey = apiKey,
                     onUpdateApiKey = onUpdateApiKey,

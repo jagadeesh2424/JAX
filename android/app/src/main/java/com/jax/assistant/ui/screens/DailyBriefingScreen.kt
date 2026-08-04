@@ -3,6 +3,9 @@ package com.jax.assistant.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,7 +25,8 @@ import com.jax.assistant.ui.theme.SurfaceDark
 fun DailyBriefingScreen(
     tasks: List<TaskEntity>,
     facts: List<FactEntity>,
-    onSpeakBriefing: (String) -> Unit
+    onSpeakBriefing: (String) -> Unit,
+    onStopSpeaking: () -> Unit
 ) {
     val pendingTasks = tasks.filter { !it.isCompleted }
     val highPriorityCount = pendingTasks.count { it.priority.lowercase() == "high" }
@@ -88,18 +92,35 @@ fun DailyBriefingScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Button(
-                    onClick = { onSpeakBriefing(briefingText) },
-                    colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Listen to Audio Briefing",
-                        color = PureDark,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
+                    Button(
+                        onClick = { onSpeakBriefing(briefingText) },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = "Listen", tint = PureDark, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Listen Audio",
+                            color = PureDark,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onStopSpeaking,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.VolumeOff, contentDescription = "Stop", tint = Color.Red, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Stop Voice", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
