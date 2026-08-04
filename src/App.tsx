@@ -14,7 +14,7 @@ import { formatRelativeTime } from './utils/dateUtils';
 import { Plus, X } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'memory'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'calendar' | 'notes' | 'briefing' | 'settings'>('chat');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ title: string; body: string } | null>(null);
@@ -25,13 +25,13 @@ export default function App() {
   const [quickPriority, setQuickPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [quickDeadline, setQuickDeadline] = useState<string>('');
 
+  const loadTasks = async () => {
+    const data = await RoomDB.getAllTasks();
+    setTasks(data);
+  };
+
   useEffect(() => {
     // Initialize Room DB & Subscribe to live changes
-    const loadTasks = async () => {
-      const data = await RoomDB.getAllTasks();
-      setTasks(data);
-    };
-
     loadTasks();
     const unsubscribe = RoomDB.subscribe(loadTasks);
 
@@ -57,6 +57,7 @@ export default function App() {
     setQuickTitle('');
     setQuickDeadline('');
     setIsQuickAddOpen(false);
+    loadTasks();
   };
 
   const pendingTasks = tasks.filter((t) => t.status === 'pending');
@@ -71,24 +72,46 @@ export default function App() {
       <NotificationBanner
         notification={notification}
         onDismiss={() => setNotification(null)}
-        onOpenBriefing={() => setActiveTab('chat')}
+        onOpenBriefing={() => setActiveTab('briefing')}
       />
 
       {/* Screen Views */}
       {activeTab === 'chat' && (
-        <ChatCaptureScreen onTaskSaved={() => {}} />
+        <ChatCaptureScreen onTaskSaved={loadTasks} />
       )}
 
       {activeTab === 'dashboard' && (
         <TaskDashboard
           tasks={tasks}
-          onTasksChanged={() => {}}
+          onTasksChanged={loadTasks}
           onOpenQuickAdd={() => setIsQuickAddOpen(true)}
         />
       )}
 
-      {activeTab === 'memory' && (
-        <NotesScreen onTasksChanged={() => {}} />
+      {activeTab === 'calendar' && (
+        <CalendarViewScreen
+          tasks={tasks}
+          onTasksChanged={loadTasks}
+          onOpenQuickAddWithDate={(dateIso) => {
+            setQuickDeadline(dateIso.slice(0, 16));
+            setIsQuickAddOpen(true);
+          }}
+        />
+      )}
+
+      {activeTab === 'notes' && (
+        <NotesScreen onTasksChanged={loadTasks} />
+      )}
+
+      {activeTab === 'briefing' && (
+        <DailyBriefingModal
+          tasks={tasks}
+          onTriggerNotification={(title, body) => setNotification({ title, body })}
+        />
+      )}
+
+      {activeTab === 'settings' && (
+        <SettingsScreen onTasksChanged={loadTasks} />
       )}
 
       {/* Quick Add Modal */}

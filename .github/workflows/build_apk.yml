@@ -1,5 +1,5 @@
 name: Build J.A.X. Native Android APK
- 
+
 on:
   push:
     branches: [ main ]
