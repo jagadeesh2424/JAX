@@ -236,7 +236,7 @@ fun DeveloperConsoleScreen(
                         }
                     }
                 )
-
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
