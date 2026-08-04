@@ -1,6 +1,7 @@
 package com.jax.assistant.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -30,41 +31,59 @@ fun MainScreen(
     messages: List<ComposeChatMessage>,
     tasks: List<TaskEntity>,
     facts: List<FactEntity>,
+    apiKey: String,
     onSendMessage: (String) -> Unit,
     onToggleTask: (TaskEntity) -> Unit,
+    onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit,
     onSearchFacts: (String) -> Unit,
+    onAddFact: (title: String, category: String, details: String) -> Unit,
+    onUpdateApiKey: (String) -> Unit,
     onMicClick: () -> Unit,
     onSpeakBriefing: (String) -> Unit
 ) {
-    var activeTab by remember { mutableStateOf(0) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing
+    var activeTab by remember { mutableStateOf(0) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings
 
     Scaffold(
         topBar = {
-            // Minimalist Header: "J.A.X. AI" + Active Dot
+            // Minimalist Header: "J.A.X. AI" + Active Dot + Settings Gear
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(PureDark)
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "J.A.X. AI",
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .background(Color(0xFF00FF66), CircleShape)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "J.A.X. AI",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(
+                                if (apiKey.isNotBlank()) Color(0xFF00FF66) else Color.Yellow,
+                                CircleShape
+                            )
+                    )
+                }
+
+                IconButton(onClick = { activeTab = 5 }) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = if (activeTab == 5) CyanAccent else Color.Gray
+                    )
+                }
             }
         },
         bottomBar = {
-            // Material 3 Navigation Bar supporting 6 main tabs
+            // Material 3 Navigation Bar
             NavigationBar(
                 containerColor = SurfaceDark,
                 contentColor = Color.White
@@ -114,10 +133,17 @@ fun MainScreen(
         ) {
             when (activeTab) {
                 0 -> OmniChatScreen(messages = messages, onSendMessage = onSendMessage, onMicClick = onMicClick)
-                1 -> TaskDashboardScreen(tasks = tasks, onToggleTask = onToggleTask)
+                1 -> TaskDashboardScreen(tasks = tasks, onToggleTask = onToggleTask, onAddTask = onAddTask)
                 2 -> CalendarScreen(tasks = tasks, onToggleTask = onToggleTask)
-                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts)
+                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts, onAddFact = onAddFact)
                 4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing)
+                5 -> SettingsScreen(
+                    apiKey = apiKey,
+                    onUpdateApiKey = onUpdateApiKey,
+                    taskCount = tasks.size,
+                    factCount = facts.size,
+                    onClearAllData = {}
+                )
             }
         }
     }

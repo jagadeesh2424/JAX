@@ -3,91 +3,69 @@ package com.jax.assistant
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.*
-import androidx.lifecycle.lifecycleScope
+import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.work.*
-import com.jax.assistant.ai.GeminiBrain
-import com.jax.assistant.ai.JaxParseResult
-import com.jax.assistant.db.AppDatabase
-import com.jax.assistant.db.FactEntity
-import com.jax.assistant.db.TaskEntity
-import com.jax.assistant.ui.screens.ComposeChatMessage
+import com.jax.assistant.ui.MainViewModel
 import com.jax.assistant.ui.screens.MainScreen
 import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.voice.VoiceManager
 import com.jax.assistant.worker.DailyAgentWorker
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var db: AppDatabase
-    private lateinit var geminiBrain: GeminiBrain
+    private val viewModel: MainViewModel by viewModels()
     private lateinit var voiceManager: VoiceManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        db = AppDatabase.getDatabase(this)
-        // Read Gemini key from BuildConfig or environment
-        val apiKey = System.getenv("GEMINI_API_KEY") ?: ""
-        geminiBrain = GeminiBrain(apiKey)
 
         // Setup WorkManager for Daily 9:00 AM Agent Briefing
         scheduleDailyBriefingWorker()
 
         setContent {
             JAXAssistantTheme {
-                var messages by remember { mutableStateOf(listOf(
-                    ComposeChatMessage("1", "Good day, Jagadeesh. J.A.X. is active and synced to your Room database.", false, "Now")
-                )) }
-
-                val tasksState = remember { mutableStateListOf<TaskEntity>() }
-                val factsState = remember { mutableStateListOf<FactEntity>() }
-
-                // Observe Room DB Flows
-                LaunchedEffect(Unit) {
-                    lifecycleScope.launch {
-                        db.taskDao().getAllTasks().collectLatest { list ->
-                            tasksState.clear()
-                            tasksState.addAll(list)
-                        }
-                    }
-                    lifecycleScope.launch {
-                        db.factDao().getAllFacts().collectLatest { list ->
-                            factsState.clear()
-                            factsState.addAll(list)
-                        }
-                    }
-                }
+                val messages by viewModel.messages.collectAsState()
+                val tasks by viewModel.tasks.collectAsState()
+                val facts by viewModel.facts.collectAsState()
+                val apiKey by viewModel.apiKey.collectAsState()
 
                 // Initialize Voice STT & TTS
                 voiceManager = remember {
                     VoiceManager(this@MainActivity) { text ->
-                        handleUserPrompt(text, messages, { messages = it })
+                        viewModel.sendMessage(text) { speechText ->
+                            voiceManager.speak(speechText)
+                        }
                     }
                 }
 
                 MainScreen(
                     messages = messages,
-                    tasks = tasksState,
-                    facts = factsState,
+                    tasks = tasks,
+                    facts = facts,
+                    apiKey = apiKey,
                     onSendMessage = { input ->
-                        handleUserPrompt(input, messages, { messages = it })
+                        viewModel.sendMessage(input) { speechText ->
+                            voiceManager.speak(speechText)
+                        }
                     },
                     onToggleTask = { task ->
-                        lifecycleScope.launch {
-                            db.taskDao().updateTask(task.copy(isCompleted = !task.isCompleted))
-                        }
+                        viewModel.toggleTask(task)
+                    },
+                    onAddTask = { title, category, priority, deadline ->
+                        viewModel.addManualTask(title, category, priority, deadline)
                     },
                     onSearchFacts = { query ->
-                        lifecycleScope.launch {
-                            db.factDao().searchFacts(query).collectLatest { list ->
-                                factsState.clear()
-                                factsState.addAll(list)
-                            }
-                        }
+                        viewModel.searchFacts(query)
+                    },
+                    onAddFact = { title, category, details ->
+                        viewModel.addManualFact(title, category, details)
+                    },
+                    onUpdateApiKey = { newKey ->
+                        viewModel.updateApiKey(newKey)
                     },
                     onMicClick = {
                         voiceManager.startListening()
@@ -96,39 +74,6 @@ class MainActivity : ComponentActivity() {
                         voiceManager.speak(text)
                     }
                 )
-            }
-        }
-    }
-
-    private fun handleUserPrompt(
-        input: String,
-        currentMessages: List<ComposeChatMessage>,
-        updateMessages: (List<ComposeChatMessage>) -> Unit
-    ) {
-        val userMsg = ComposeChatMessage(System.currentTimeMillis().toString(), input, true, "Now")
-        val updated = currentMessages + userMsg
-        updateMessages(updated)
-
-        lifecycleScope.launch {
-            val result = geminiBrain.processUserInput(input)
-            when (result) {
-                is JaxParseResult.TaskResult -> {
-                    db.taskDao().insertTask(result.task)
-                    val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), result.reply, false, "Now")
-                    updateMessages(updated + aiMsg)
-                    voiceManager.speak(result.reply)
-                }
-                is JaxParseResult.FactResult -> {
-                    db.factDao().insertFact(result.fact)
-                    val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), result.reply, false, "Now")
-                    updateMessages(updated + aiMsg)
-                    voiceManager.speak(result.reply)
-                }
-                is JaxParseResult.QuestionResult -> {
-                    val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), result.reply, false, "Now")
-                    updateMessages(updated + aiMsg)
-                    voiceManager.speak(result.reply)
-                }
             }
         }
     }
@@ -147,6 +92,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        voiceManager.shutdown()
+        if (::voiceManager.isInitialized) {
+            voiceManager.shutdown()
+        }
     }
 }
