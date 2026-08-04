@@ -115,10 +115,11 @@ fun CalendarScreen(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
-                            if (task.deadline.isNotEmpty()) {
+                            val deadline = task.deadline
+                            if (!deadline.isNullOrEmpty()) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Due: ${task.deadline}",
+                                    text = "Due: $deadline",
                                     color = GoldAccent,
                                     fontSize = 11.sp
                                 )
