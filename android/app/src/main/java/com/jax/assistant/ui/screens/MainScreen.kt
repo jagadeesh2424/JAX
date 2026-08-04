@@ -22,6 +22,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.RequestLog
+import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.theme.CyanAccent
@@ -35,6 +38,9 @@ fun MainScreen(
     facts: List<FactEntity>,
     apiKey: String,
     selectedModel: String = "gemini-2.0-flash",
+    developerMode: Boolean = false,
+    modelCatalog: List<ModelInfo> = emptyList(),
+    requestLogs: List<RequestLog> = emptyList(),
     onSendMessage: (String) -> Unit,
     onToggleTask: (TaskEntity) -> Unit,
     onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit,
@@ -42,6 +48,9 @@ fun MainScreen(
     onAddFact: (title: String, category: String, details: String) -> Unit,
     onUpdateApiKey: (String) -> Unit,
     onUpdateSelectedModel: (String) -> Unit = {},
+    onToggleDeveloperMode: (Boolean) -> Unit = {},
+    onRunHealthCheck: ((onResult: (String) -> Unit) -> Unit)? = null,
+    onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
     onMicClick: () -> Unit,
     onSpeakBriefing: (String) -> Unit,
     onStopSpeaking: () -> Unit
@@ -169,6 +178,12 @@ fun MainScreen(
                     onUpdateApiKey = onUpdateApiKey,
                     selectedModel = selectedModel,
                     onUpdateSelectedModel = onUpdateSelectedModel,
+                    onTestConnection = onTestConnection,
+                    developerMode = developerMode,
+                    onToggleDeveloperMode = onToggleDeveloperMode,
+                    modelCatalog = modelCatalog,
+                    requestLogs = requestLogs,
+                    onRunHealthCheck = onRunHealthCheck,
                     taskCount = tasks.size,
                     factCount = facts.size,
                     onClearAllData = {}

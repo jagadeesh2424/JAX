@@ -4,6 +4,9 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jax.assistant.ai.JaxParseResult
+import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.RequestLog
+import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.data.JaxRepository
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
@@ -36,6 +39,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedModel = MutableStateFlow<String>(repository.getSelectedModel())
     val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
+
+    private val _developerMode = MutableStateFlow<Boolean>(repository.isDeveloperMode())
+    val developerMode: StateFlow<Boolean> = _developerMode.asStateFlow()
+
+    val requestLogs: StateFlow<List<RequestLog>> = repository.requestLogs
 
     private val _isProcessing = MutableStateFlow<Boolean>(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
@@ -134,5 +142,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateSelectedModel(modelName: String) {
         repository.saveSelectedModel(modelName)
         _selectedModel.value = modelName.trim()
+    }
+
+    fun setDeveloperMode(enabled: Boolean) {
+        repository.setDeveloperMode(enabled)
+        _developerMode.value = enabled
+    }
+
+    fun getModelCatalog(): List<ModelInfo> = repository.getModelCatalog()
+
+    fun getActiveModel(): String = repository.getActiveModel()
+
+    fun runHealthCheck(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.runHealthCheck()
+            onResult(result)
+        }
+    }
+
+    fun testConnection(onResult: (TestConnectionResult) -> Unit) {
+        viewModelScope.launch {
+            val res = repository.testConnection()
+            onResult(res)
+        }
     }
 }

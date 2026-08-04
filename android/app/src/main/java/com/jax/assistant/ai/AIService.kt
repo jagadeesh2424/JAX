@@ -1,5 +1,10 @@
 package com.jax.assistant.ai
 
+data class TestConnectionResult(
+    val isSuccess: Boolean,
+    val message: String
+)
+
 sealed class AIError(val userFriendlyMessage: String) {
     object InvalidApiKey : AIError("Invalid or missing Gemini API key. Please tap Settings ⚙️ to enter your API key.")
     object QuotaExceeded : AIError("API quota or rate limit reached. Please check your Google AI key usage limits.")
@@ -13,4 +18,5 @@ class AIException(val error: AIError) : Exception(error.userFriendlyMessage)
 
 interface AIService {
     suspend fun generate(prompt: String, modelName: String): String
+    suspend fun testConnection(modelName: String): TestConnectionResult
 }

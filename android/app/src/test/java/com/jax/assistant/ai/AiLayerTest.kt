@@ -17,6 +17,14 @@ class AiLayerTest {
             shouldFailWith?.let { throw AIException(it) }
             return mockResponse
         }
+
+        override suspend fun testConnection(modelName: String): TestConnectionResult {
+            lastModel = modelName
+            shouldFailWith?.let {
+                return TestConnectionResult(false, it.userFriendlyMessage)
+            }
+            return TestConnectionResult(true, "Connection successful to $modelName")
+        }
     }
 
     @Test
@@ -85,5 +93,13 @@ class AiLayerTest {
         assertTrue(result is JaxParseResult.QuestionResult)
         val questionResult = result as JaxParseResult.QuestionResult
         assertTrue(questionResult.reply.contains("Invalid or missing Gemini API key"))
+    }
+
+    @Test
+    fun testTestConnectionFunction() = runBlocking {
+        val mockService = MockAIService()
+        val connectionResult = mockService.testConnection("gemini-2.0-flash")
+        assertTrue(connectionResult.isSuccess)
+        assertTrue(connectionResult.message.contains("gemini-2.0-flash"))
     }
 }

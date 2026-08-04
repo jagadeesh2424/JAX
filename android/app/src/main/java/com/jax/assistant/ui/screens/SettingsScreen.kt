@@ -4,17 +4,30 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.RequestLog
+import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
 import com.jax.assistant.ui.theme.PureDark
@@ -26,6 +39,12 @@ fun SettingsScreen(
     onUpdateApiKey: (String) -> Unit,
     selectedModel: String = "gemini-2.0-flash",
     onUpdateSelectedModel: (String) -> Unit = {},
+    onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
+    developerMode: Boolean = false,
+    onToggleDeveloperMode: (Boolean) -> Unit = {},
+    modelCatalog: List<ModelInfo> = emptyList(),
+    requestLogs: List<RequestLog> = emptyList(),
+    onRunHealthCheck: ((onResult: (String) -> Unit) -> Unit)? = null,
     taskCount: Int,
     factCount: Int,
     onClearAllData: () -> Unit
@@ -36,16 +55,18 @@ fun SettingsScreen(
     var dailyWorkerEnabled by remember { mutableStateOf(true) }
     var showSavedToast by remember { mutableStateOf(false) }
 
-    val modelOptions = listOf(
-        "gemini-2.0-flash" to "Gemini 2.0 Flash (Recommended)",
-        "gemini-2.5-flash" to "Gemini 2.5 Flash",
-        "gemini-2.5-pro" to "Gemini 2.5 Pro"
-    )
+    var isTestingConnection by remember { mutableStateOf(false) }
+    var testResultMsg by remember { mutableStateOf<String?>(null) }
+    var isTestSuccess by remember { mutableStateOf(false) }
+
+    var isHealthCheckRunning by remember { mutableStateOf(false) }
+    var healthCheckResultMsg by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(PureDark)
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
         Text(
@@ -57,70 +78,291 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // AI Model Selection Card
+        // Automatic AI Model Routing & Selection Card
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
                 .padding(16.dp)
         ) {
-            Text(
-                text = "SELECT AI MODEL",
-                color = CyanAccent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.AutoAwesome,
+                        contentDescription = "Auto Routing",
+                        tint = CyanAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "AI MODEL ROUTING",
+                        color = CyanAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .background(CyanAccent.copy(alpha = 0.2f), shape = RoundedCornerShape(12.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(text = "AUTOMATIC", color = CyanAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Choose the Gemini model to power J.A.X. executive intelligence:",
+                text = "J.A.X. automatically selects the optimal Gemini model based on task capability, health status, speed, and failover health.",
                 color = Color.Gray,
                 fontSize = 12.sp
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            modelOptions.forEach { (modelKey, modelLabel) ->
-                val isSelected = selectedModel.equals(modelKey, ignoreCase = true)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .background(
-                            if (isSelected) CyanAccent.copy(alpha = 0.15f) else Color.Transparent,
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = if (isSelected) CyanAccent else Color.DarkGray,
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        .clickable { onUpdateSelectedModel(modelKey) }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = modelLabel,
-                        color = if (isSelected) Color.White else Color.LightGray,
-                        fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
-
-                    RadioButton(
-                        selected = isSelected,
-                        onClick = { onUpdateSelectedModel(modelKey) },
-                        colors = RadioButtonDefaults.colors(
-                            selectedColor = CyanAccent,
-                            unselectedColor = Color.Gray
-                        )
-                    )
+            // Preferred Provider
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(PureDark.copy(alpha = 0.5f), shape = RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(text = "Preferred Provider", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(text = "Google Gemini Engine (Auto-Failover)", color = Color.LightGray, fontSize = 11.sp)
                 }
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(Color(0xFF00FF66), CircleShape)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Developer Mode Toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.BugReport,
+                        contentDescription = "Developer Mode",
+                        tint = if (developerMode) GoldAccent else Color.Gray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(text = "Developer Mode", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(text = "Show real-time routing metrics, retries, & logs", color = Color.Gray, fontSize = 11.sp)
+                    }
+                }
+
+                Switch(
+                    checked = developerMode,
+                    onCheckedChange = { onToggleDeveloperMode(it) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = PureDark, checkedTrackColor = GoldAccent)
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        // DEVELOPER DIAGNOSTICS DASHBOARD (Visible ONLY when Developer Mode is enabled)
+        if (developerMode) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
+                    .border(1.dp, GoldAccent.copy(alpha = 0.5f), shape = RoundedCornerShape(14.dp))
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "DEVELOPER ROUTER DIAGNOSTICS",
+                    color = GoldAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Current Active Model Info
+                val activeModelName = selectedModel.ifBlank { "gemini-2.0-flash" }
+                val activeModelObj = modelCatalog.find { it.id.equals(activeModelName, ignoreCase = true) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(PureDark, shape = RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "Active Routed Model", color = Color.Gray, fontSize = 11.sp)
+                        Text(
+                            text = activeModelObj?.displayName ?: activeModelName,
+                            color = GoldAccent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(text = "Avg Latency", color = Color.Gray, fontSize = 11.sp)
+                        Text(
+                            text = if ((activeModelObj?.averageLatency ?: 0L) > 0) "${activeModelObj?.averageLatency} ms" else "< 350 ms",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Model Health Catalog Table
+                Text(text = "MODEL HEALTH CATALOG", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
+
+                modelCatalog.forEach { model ->
+                    val isCooldown = System.currentTimeMillis() < model.cooldownUntil
+                    val statusColor = if (!model.enabled) Color.Gray else if (isCooldown) Color.Yellow else Color(0xFF00FF66)
+                    val statusText = if (!model.enabled) "Disabled" else if (isCooldown) "Cooldown" else "Healthy"
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp)
+                            .background(PureDark.copy(alpha = 0.6f), shape = RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = model.id, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            Text(
+                                text = "Prio: ${model.priority} | Speed: ${model.speedScore}/10 | Reason: ${model.reasoningScore}/10",
+                                color = Color.Gray,
+                                fontSize = 10.sp
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(statusColor, CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = statusText, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            if (model.failureCount > 0) {
+                                Text(text = "Failures: ${model.failureCount}", color = Color.Red, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Run Health Check Button
+                Button(
+                    onClick = {
+                        isHealthCheckRunning = true
+                        healthCheckResultMsg = null
+                        onRunHealthCheck?.invoke { res ->
+                            isHealthCheckRunning = false
+                            healthCheckResultMsg = res
+                        }
+                    },
+                    enabled = !isHealthCheckRunning,
+                    colors = ButtonDefaults.buttonColors(containerColor = GoldAccent),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isHealthCheckRunning) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PureDark, strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = "Testing All Models...", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    } else {
+                        Text(text = "🧪 Run Health Check Across Catalog", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                healthCheckResultMsg?.let { msg ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(text = msg, color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Recent Routing Request Logs
+                Text(text = "RECENT ROUTING REQUEST LOGS", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (requestLogs.isEmpty()) {
+                    Text(text = "No request logs recorded yet.", color = Color.Gray, fontSize = 11.sp)
+                } else {
+                    requestLogs.take(5).forEach { log ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                                .background(PureDark.copy(alpha = 0.8f), shape = RoundedCornerShape(6.dp))
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    if (log.isSuccess) Icons.Default.CheckCircle else Icons.Default.Error,
+                                    contentDescription = null,
+                                    tint = if (log.isSuccess) Color(0xFF00FF66) else Color.Red,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = log.modelUsed,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text(
+                                        text = "Retries: ${log.retryCount} | Latency: ${log.latencyMs} ms",
+                                        color = Color.Gray,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "HTTP ${log.httpStatus ?: 200}",
+                                color = if (log.isSuccess) Color(0xFF00FF66) else Color.Red,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         // API Key Card
         Column(
@@ -163,7 +405,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Provide your Google Gemini API key to enable AI intelligence.",
+                text = "Provide your Google Gemini API key to enable AI intelligence across routed models.",
                 color = Color.Gray,
                 fontSize = 12.sp
             )
@@ -219,6 +461,86 @@ fun SettingsScreen(
                     color = Color(0xFF00FF66),
                     fontSize = 11.sp
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Connection Diagnostics & Test Connection Card
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "CONNECTION DIAGNOSTICS",
+                color = CyanAccent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Verify API key, automated router health, network connectivity, and AI response:",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    isTestingConnection = true
+                    testResultMsg = null
+                    onTestConnection?.invoke { result ->
+                        isTestingConnection = false
+                        isTestSuccess = result.isSuccess
+                        testResultMsg = result.message
+                    }
+                },
+                enabled = !isTestingConnection,
+                colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isTestingConnection) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = PureDark,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Testing Connection...", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                } else {
+                    Text(text = "⚡ Test AI Router Connection", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+
+            testResultMsg?.let { msg ->
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (isTestSuccess) Color(0xFF00FF66).copy(alpha = 0.15f) else Color.Red.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .border(
+                            1.dp,
+                            if (isTestSuccess) Color(0xFF00FF66) else Color.Red,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = msg,
+                        color = if (isTestSuccess) Color(0xFF00FF66) else Color(0xFFFF6B6B),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
 

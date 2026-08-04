@@ -6,10 +6,14 @@ import com.jax.assistant.ai.GeminiAIService
 import com.jax.assistant.ai.GeminiBrain
 import com.jax.assistant.ai.JaxParseResult
 import com.jax.assistant.ai.MemoryEngine
+import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.RequestLog
+import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.db.AppDatabase
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 
 class JaxRepository(private val context: Context) {
@@ -24,7 +28,7 @@ class JaxRepository(private val context: Context) {
         val storedKey = prefs.getString("gemini_api_key", null)
             ?: System.getenv("GEMINI_API_KEY")
             ?: ""
-        aiService = GeminiAIService(storedKey)
+        aiService = GeminiAIService(storedKey, context)
         geminiBrain = GeminiBrain(aiService, MemoryEngine())
     }
 
@@ -46,6 +50,28 @@ class JaxRepository(private val context: Context) {
 
     fun saveSelectedModel(modelName: String) {
         prefs.edit().putString("selected_ai_model", modelName.trim()).apply()
+    }
+
+    fun isDeveloperMode(): Boolean {
+        return prefs.getBoolean("developer_mode", false)
+    }
+
+    fun setDeveloperMode(enabled: Boolean) {
+        prefs.edit().putBoolean("developer_mode", enabled).apply()
+    }
+
+    fun getModelCatalog(): List<ModelInfo> = aiService.router.getModels()
+
+    val requestLogs: StateFlow<List<RequestLog>> = aiService.router.requestLogs
+
+    fun getActiveModel(): String = aiService.router.getActiveModel()
+
+    suspend fun runHealthCheck(): String {
+        return aiService.router.performHealthCheck(getApiKey())
+    }
+
+    suspend fun testConnection(modelName: String = getSelectedModel()): TestConnectionResult {
+        return aiService.testConnection(modelName)
     }
 
     fun getAllTasks(): Flow<List<TaskEntity>> = db.taskDao().getAllTasks()

@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
                 val facts by viewModel.facts.collectAsState()
                 val apiKey by viewModel.apiKey.collectAsState()
                 val selectedModel by viewModel.selectedModel.collectAsState()
+                val developerMode by viewModel.developerMode.collectAsState()
+                val requestLogs by viewModel.requestLogs.collectAsState()
 
                 // Initialize Voice STT & TTS
                 voiceManager = remember {
@@ -49,6 +51,9 @@ class MainActivity : ComponentActivity() {
                     facts = facts,
                     apiKey = apiKey,
                     selectedModel = selectedModel,
+                    developerMode = developerMode,
+                    modelCatalog = viewModel.getModelCatalog(),
+                    requestLogs = requestLogs,
                     onSendMessage = { input ->
                         viewModel.sendMessage(input) { speechText ->
                             voiceManager.speak(speechText)
@@ -71,6 +76,15 @@ class MainActivity : ComponentActivity() {
                     },
                     onUpdateSelectedModel = { modelName ->
                         viewModel.updateSelectedModel(modelName)
+                    },
+                    onToggleDeveloperMode = { enabled ->
+                        viewModel.setDeveloperMode(enabled)
+                    },
+                    onRunHealthCheck = { onResult ->
+                        viewModel.runHealthCheck(onResult)
+                    },
+                    onTestConnection = { onResult ->
+                        viewModel.testConnection(onResult)
                     },
                     onMicClick = {
                         voiceManager.startListening()
