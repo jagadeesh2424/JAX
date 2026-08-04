@@ -1,0 +1,6 @@
+{
+  "name": "J.A.X - Jagadeesh Assistant X",
+  "description": "Android task management app inspired by Saner.ai and TaskManager.com featuring plain-English AI chat capture with Gemini, Room/SQLite local database, and proactive daily briefings.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
