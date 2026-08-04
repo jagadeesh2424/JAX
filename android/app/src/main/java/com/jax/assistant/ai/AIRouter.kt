@@ -37,6 +37,40 @@ class AIRouter(context: Context? = null) {
 
     fun getActiveModel(): String = activeModel
 
+    suspend fun ensureModelDiscovery(apiKey: String, force: Boolean = false) {
+        if (apiKey.isBlank()) return
+        val isExpired = healthStore?.isDiscoveryExpired() ?: true
+        if (force || isExpired || models.isEmpty()) {
+            val discovered = ModelCatalog.discoverModels(apiKey)
+            if (discovered.isNotEmpty()) {
+                val existingMap = models.associateBy { it.id }
+                models.clear()
+                for (disc in discovered) {
+                    val prev = existingMap[disc.id]
+                    if (prev != null) {
+                        disc.lastSuccess = prev.lastSuccess
+                        disc.lastFailure = prev.lastFailure
+                        disc.cooldownUntil = prev.cooldownUntil
+                        disc.failureCount = prev.failureCount
+                        disc.averageLatency = prev.averageLatency
+                        if (!prev.enabled) {
+                            disc.enabled = false
+                            disc.exclusionReason = prev.exclusionReason
+                        }
+                    }
+                    models.add(disc)
+                }
+                healthStore?.markDiscoveryUpdated()
+                healthStore?.saveModels(models)
+
+                val firstEnabled = models.firstOrNull { it.enabled }?.id
+                if (firstEnabled != null && !models.any { it.id == activeModel && it.enabled }) {
+                    activeModel = firstEnabled
+                }
+            }
+        }
+    }
+
     suspend fun route(
         prompt: String,
         apiKey: String,
@@ -44,6 +78,8 @@ class AIRouter(context: Context? = null) {
         capability: TaskCapability = TaskCapability.GENERAL_CONVERSATION,
         requireJson: Boolean = true
     ): String {
+        ensureModelDiscovery(apiKey, force = false)
+
         val now = System.currentTimeMillis()
         val candidateModels = ModelSelector.selectCandidateModels(
             models = models,
@@ -131,6 +167,7 @@ class AIRouter(context: Context? = null) {
     }
 
     suspend fun testConnection(apiKey: String, modelName: String = ""): TestConnectionResult {
+        ensureModelDiscovery(apiKey, force = false)
         val targetModel = modelName.ifBlank { activeModel }
         val provider = providers["Gemini"] ?: return TestConnectionResult(false, "Gemini provider unavailable.")
 
@@ -145,6 +182,10 @@ class AIRouter(context: Context? = null) {
             } else {
                 candidate.failureCount++
                 candidate.lastFailure = System.currentTimeMillis()
+                if (result.message.contains("404")) {
+                    candidate.enabled = false
+                    candidate.exclusionReason = "HTTP 404: Removed immediately"
+                }
             }
             healthStore?.saveModels(models)
         }
@@ -153,6 +194,7 @@ class AIRouter(context: Context? = null) {
     }
 
     suspend fun performHealthCheck(apiKey: String): String {
+        ensureModelDiscovery(apiKey, force = false)
         var healthyCount = 0
         var totalTested = 0
 
@@ -173,6 +215,7 @@ class AIRouter(context: Context? = null) {
         model.lastSuccess = now
         model.cooldownUntil = 0L
         model.failureCount = 0
+        model.exclusionReason = null
         model.averageLatency = if (model.averageLatency == 0L) latency else (model.averageLatency + latency) / 2
     }
 
@@ -180,14 +223,29 @@ class AIRouter(context: Context? = null) {
         model.lastFailure = now
         model.failureCount++
 
-        val cooldownMs = when (result.httpStatus) {
-            404 -> 86400000L // 24 hours for missing models
-            429 -> 60000L    // 60 seconds for rate limit
-            500, 502, 503 -> 15000L // 15 seconds for server error
-            408 -> 30000L    // 30 seconds for timeout
-            else -> 10000L   // 10 seconds default cooldown
+        when (result.httpStatus) {
+            404 -> {
+                model.enabled = false
+                model.cooldownUntil = now + 86400000L
+                model.exclusionReason = "HTTP 404: Removed immediately (Model not found or unsupported for key)"
+            }
+            429 -> {
+                model.cooldownUntil = now + 60000L // 60s cooldown
+                model.exclusionReason = "HTTP 429: Cooldown active (Rate limited)"
+            }
+            500, 502, 503 -> {
+                model.cooldownUntil = now + 15000L
+                model.exclusionReason = "HTTP ${result.httpStatus}: Server error"
+            }
+            408 -> {
+                model.cooldownUntil = now + 30000L
+                model.exclusionReason = "HTTP 408: Timeout"
+            }
+            else -> {
+                model.cooldownUntil = now + 10000L
+                model.exclusionReason = "HTTP ${result.httpStatus ?: "ERR"}: ${result.errorMessage ?: "Failed"}"
+            }
         }
-        model.cooldownUntil = now + cooldownMs
     }
 
     private fun logRequest(logEntry: RequestLog) {

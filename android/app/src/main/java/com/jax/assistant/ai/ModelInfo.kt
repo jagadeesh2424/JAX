@@ -11,6 +11,8 @@ data class ModelInfo(
     val supportsJson: Boolean = true,
     val supportsStreaming: Boolean = false,
     val supportsVision: Boolean = false,
+    val supportedMethods: String = "generateContent",
+    var exclusionReason: String? = null,
     var enabled: Boolean = true,
     var lastSuccess: Long = 0L,
     var lastFailure: Long = 0L,
@@ -18,3 +20,4 @@ data class ModelInfo(
     var failureCount: Int = 0,
     var averageLatency: Long = 0L
 )
+

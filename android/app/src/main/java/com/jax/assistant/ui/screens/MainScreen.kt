@@ -56,8 +56,18 @@ fun MainScreen(
     onStopSpeaking: () -> Unit
 ) {
     var activeTab by remember { mutableStateOf(0) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings
+    var showDevConsole by remember { mutableStateOf(false) }
 
-    Scaffold(
+    if (showDevConsole) {
+        DeveloperConsoleScreen(
+            apiKey = apiKey,
+            selectedModel = selectedModel,
+            taskCount = tasks.size,
+            factCount = facts.size,
+            onClose = { showDevConsole = false }
+        )
+    } else {
+        Scaffold(
         topBar = {
             // Minimalist Header: "J.A.X. AI" + Status + Stop Voice Button + Settings Gear
             Row(
@@ -181,6 +191,7 @@ fun MainScreen(
                     onTestConnection = onTestConnection,
                     developerMode = developerMode,
                     onToggleDeveloperMode = onToggleDeveloperMode,
+                    onOpenDevConsole = { showDevConsole = true },
                     modelCatalog = modelCatalog,
                     requestLogs = requestLogs,
                     onRunHealthCheck = onRunHealthCheck,
@@ -191,4 +202,5 @@ fun MainScreen(
             }
         }
     }
+}
 }
