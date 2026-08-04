@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
                 val tasks by viewModel.tasks.collectAsState()
                 val facts by viewModel.facts.collectAsState()
                 val apiKey by viewModel.apiKey.collectAsState()
+                val selectedModel by viewModel.selectedModel.collectAsState()
 
                 // Initialize Voice STT & TTS
                 voiceManager = remember {
@@ -47,6 +48,7 @@ class MainActivity : ComponentActivity() {
                     tasks = tasks,
                     facts = facts,
                     apiKey = apiKey,
+                    selectedModel = selectedModel,
                     onSendMessage = { input ->
                         viewModel.sendMessage(input) { speechText ->
                             voiceManager.speak(speechText)
@@ -66,6 +68,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onUpdateApiKey = { newKey ->
                         viewModel.updateApiKey(newKey)
+                    },
+                    onUpdateSelectedModel = { modelName ->
+                        viewModel.updateSelectedModel(modelName)
                     },
                     onMicClick = {
                         voiceManager.startListening()

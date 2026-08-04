@@ -1,6 +1,8 @@
 package com.jax.assistant.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -22,6 +24,8 @@ import com.jax.assistant.ui.theme.SurfaceDark
 fun SettingsScreen(
     apiKey: String,
     onUpdateApiKey: (String) -> Unit,
+    selectedModel: String = "gemini-2.0-flash",
+    onUpdateSelectedModel: (String) -> Unit = {},
     taskCount: Int,
     factCount: Int,
     onClearAllData: () -> Unit
@@ -31,6 +35,12 @@ fun SettingsScreen(
     var voiceResponsesEnabled by remember { mutableStateOf(true) }
     var dailyWorkerEnabled by remember { mutableStateOf(true) }
     var showSavedToast by remember { mutableStateOf(false) }
+
+    val modelOptions = listOf(
+        "gemini-2.0-flash" to "Gemini 2.0 Flash (Recommended)",
+        "gemini-2.5-flash" to "Gemini 2.5 Flash",
+        "gemini-2.5-pro" to "Gemini 2.5 Pro"
+    )
 
     Column(
         modifier = Modifier
@@ -44,6 +54,71 @@ fun SettingsScreen(
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // AI Model Selection Card
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "SELECT AI MODEL",
+                color = CyanAccent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Choose the Gemini model to power J.A.X. executive intelligence:",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            modelOptions.forEach { (modelKey, modelLabel) ->
+                val isSelected = selectedModel.equals(modelKey, ignoreCase = true)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .background(
+                            if (isSelected) CyanAccent.copy(alpha = 0.15f) else Color.Transparent,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) CyanAccent else Color.DarkGray,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable { onUpdateSelectedModel(modelKey) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = modelLabel,
+                        color = if (isSelected) Color.White else Color.LightGray,
+                        fontSize = 13.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    )
+
+                    RadioButton(
+                        selected = isSelected,
+                        onClick = { onUpdateSelectedModel(modelKey) },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = CyanAccent,
+                            unselectedColor = Color.Gray
+                        )
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -88,7 +163,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Provide your Google Gemini API key to enable AI intelligence on physical devices.",
+                text = "Provide your Google Gemini API key to enable AI intelligence.",
                 color = Color.Gray,
                 fontSize = 12.sp
             )

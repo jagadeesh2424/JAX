@@ -34,12 +34,14 @@ fun MainScreen(
     tasks: List<TaskEntity>,
     facts: List<FactEntity>,
     apiKey: String,
+    selectedModel: String = "gemini-2.0-flash",
     onSendMessage: (String) -> Unit,
     onToggleTask: (TaskEntity) -> Unit,
     onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit,
     onSearchFacts: (String) -> Unit,
     onAddFact: (title: String, category: String, details: String) -> Unit,
     onUpdateApiKey: (String) -> Unit,
+    onUpdateSelectedModel: (String) -> Unit = {},
     onMicClick: () -> Unit,
     onSpeakBriefing: (String) -> Unit,
     onStopSpeaking: () -> Unit
@@ -165,6 +167,8 @@ fun MainScreen(
                 5 -> SettingsScreen(
                     apiKey = apiKey,
                     onUpdateApiKey = onUpdateApiKey,
+                    selectedModel = selectedModel,
+                    onUpdateSelectedModel = onUpdateSelectedModel,
                     taskCount = tasks.size,
                     factCount = facts.size,
                     onClearAllData = {}

@@ -2,8 +2,10 @@ package com.jax.assistant.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.jax.assistant.ai.GeminiAIService
 import com.jax.assistant.ai.GeminiBrain
 import com.jax.assistant.ai.JaxParseResult
+import com.jax.assistant.ai.MemoryEngine
 import com.jax.assistant.db.AppDatabase
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
@@ -15,13 +17,15 @@ class JaxRepository(private val context: Context) {
     private val db: AppDatabase = AppDatabase.getDatabase(context)
     private val prefs: SharedPreferences = context.getSharedPreferences("jax_prefs", Context.MODE_PRIVATE)
 
+    private val aiService: GeminiAIService
     private val geminiBrain: GeminiBrain
 
     init {
         val storedKey = prefs.getString("gemini_api_key", null)
             ?: System.getenv("GEMINI_API_KEY")
             ?: ""
-        geminiBrain = GeminiBrain(storedKey)
+        aiService = GeminiAIService(storedKey)
+        geminiBrain = GeminiBrain(aiService, MemoryEngine())
     }
 
     fun getApiKey(): String {
@@ -31,8 +35,17 @@ class JaxRepository(private val context: Context) {
     }
 
     fun saveApiKey(key: String) {
-        prefs.edit().putString("gemini_api_key", key.trim()).apply()
-        geminiBrain.apiKey = key.trim()
+        val trimmedKey = key.trim()
+        prefs.edit().putString("gemini_api_key", trimmedKey).apply()
+        aiService.apiKey = trimmedKey
+    }
+
+    fun getSelectedModel(): String {
+        return prefs.getString("selected_ai_model", "gemini-2.0-flash") ?: "gemini-2.0-flash"
+    }
+
+    fun saveSelectedModel(modelName: String) {
+        prefs.edit().putString("selected_ai_model", modelName.trim()).apply()
     }
 
     fun getAllTasks(): Flow<List<TaskEntity>> = db.taskDao().getAllTasks()
@@ -75,7 +88,8 @@ class JaxRepository(private val context: Context) {
 
     fun searchFacts(query: String): Flow<List<FactEntity>> = db.factDao().searchFacts(query)
 
-    suspend fun processUserInput(input: String): JaxParseResult {
-        return geminiBrain.processUserInput(input)
+    suspend fun processUserInput(input: String, factsList: List<FactEntity> = emptyList()): JaxParseResult {
+        val selectedModel = getSelectedModel()
+        return geminiBrain.processUserInput(input, selectedModel, factsList)
     }
 }

@@ -34,6 +34,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _apiKey = MutableStateFlow<String>(repository.getApiKey())
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
+    private val _selectedModel = MutableStateFlow<String>(repository.getSelectedModel())
+    val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
+
     private val _isProcessing = MutableStateFlow<Boolean>(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
@@ -61,7 +64,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                val result = repository.processUserInput(input)
+                val result = repository.processUserInput(input, _facts.value)
                 when (result) {
                     is JaxParseResult.TaskResult -> {
                         repository.insertTask(result.task)
@@ -126,5 +129,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateApiKey(newKey: String) {
         repository.saveApiKey(newKey)
         _apiKey.value = newKey.trim()
+    }
+
+    fun updateSelectedModel(modelName: String) {
+        repository.saveSelectedModel(modelName)
+        _selectedModel.value = modelName.trim()
     }
 }

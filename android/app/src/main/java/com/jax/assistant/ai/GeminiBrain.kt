@@ -1,7 +1,5 @@
 package com.jax.assistant.ai
 
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.generationConfig
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import org.json.JSONObject
@@ -13,87 +11,40 @@ sealed class JaxParseResult {
     data class QuestionResult(val reply: String) : JaxParseResult()
 }
 
-class GeminiBrain(var apiKey: String) {
+class GeminiBrain(
+    private val aiService: AIService,
+    private val memoryEngine: MemoryEngine = MemoryEngine()
+) {
 
-    private val candidateModels = listOf(
-        "gemini-1.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-pro",
-        "gemini-flash"
-    )
+    suspend fun processUserInput(
+        input: String,
+        selectedModel: String = "gemini-2.0-flash",
+        allFacts: List<FactEntity> = emptyList()
+    ): JaxParseResult {
+        return try {
+            // Retrieve only relevant memories
+            val relevantMemories = memoryEngine.selectRelevantMemories(input, allFacts)
 
-    private val jsonSchemaPrompt = """
-        You are J.A.X. (Jagadeesh Agent X), an executive AI butler for Jagadeesh.
-        Classify user message into TASK, MEMORY (Fact), or QUESTION.
-        
-        Respond STRICTLY with valid JSON format matching:
-        {
-          "itemType": "TASK" | "MEMORY" | "QUESTION",
-          "reply": "friendly executive response to Jagadeesh",
-          "title": "short task or memory title",
-          "category": "Work" | "Personal" | "General" | "Finance",
-          "priority": "HIGH" | "MED" | "LOW",
-          "deadline": "YYYY-MM-DD or empty string",
-          "details": "full note or memory details"
-        }
-    """.trimIndent()
+            // Construct prompt using PromptBuilder
+            val prompt = PromptBuilder.buildPrompt(
+                userProfile = "Jagadeesh",
+                relevantMemories = relevantMemories,
+                userInput = input
+            )
 
-    suspend fun processUserInput(input: String): JaxParseResult {
-        val keyToUse = apiKey.trim()
-        if (keyToUse.isBlank()) {
-            return JaxParseResult.QuestionResult(
-                "Gemini API key is missing. Please tap the Settings icon ⚙️ at top right to enter your API key."
+            // Execute AI call via AIService interface
+            val responseText = aiService.generate(prompt, selectedModel)
+
+            // Parse response safely
+            parseJsonResponse(responseText, input)
+                ?: JaxParseResult.QuestionResult("Understood, Jagadeesh.")
+        } catch (e: AIException) {
+            JaxParseResult.QuestionResult(e.error.userFriendlyMessage)
+        } catch (e: Exception) {
+            JaxParseResult.QuestionResult(
+                "J.A.X. Notice: ${e.localizedMessage ?: "Unable to complete AI request. Please check API Key in Settings ⚙️."}"
             )
         }
-
-        val prompt = "$jsonSchemaPrompt\n\nUser Message: \"$input\""
-        var lastExceptionMessage = ""
-
-        // Try candidate models with fallback
-        for (modelName in candidateModels) {
-            try {
-                val model = GenerativeModel(
-                    modelName = modelName,
-                    apiKey = keyToUse,
-                    generationConfig = generationConfig {
-                        responseMimeType = "application/json"
-                    }
-                )
-
-                val response = model.generateContent(prompt)
-                val rawText = response.text
-                if (!rawText.isNullOrBlank()) {
-                    val parsed = parseJsonResponse(rawText, input)
-                    if (parsed != null) {
-                        return parsed
-                    }
-                }
-            } catch (e: Exception) {
-                lastExceptionMessage = e.localizedMessage ?: e.message ?: "Unknown model error"
-                // Try fallback without responseMimeType in case model doesn't support json mime type
-                try {
-                    val fallbackModel = GenerativeModel(
-                        modelName = modelName,
-                        apiKey = keyToUse
-                    )
-                    val response = fallbackModel.generateContent(prompt)
-                    val rawText = response.text
-                    if (!rawText.isNullOrBlank()) {
-                        val parsed = parseJsonResponse(rawText, input)
-                        if (parsed != null) {
-                            return parsed
-                        }
-                    }
-                } catch (e2: Exception) {
-                    lastExceptionMessage = e2.localizedMessage ?: e2.message ?: lastExceptionMessage
-                }
-            }
-        }
-
-        // Return clear, user-friendly notice if all attempts failed
-        return JaxParseResult.QuestionResult(
-            "J.A.X. Notice: Unable to reach Gemini AI service ($lastExceptionMessage). Please verify your API Key in Settings ⚙️."
-        )
     }
 
     private fun parseJsonResponse(rawText: String, originalInput: String): JaxParseResult? {
