@@ -34,11 +34,10 @@ class GeminiBrain(private val apiKey: String) {
     """.trimIndent()
 
     private val model = GenerativeModel(
-        modelName = "gemini-2.5-flash",
+        modelName = "gemini-1.5-flash",
         apiKey = apiKey,
         generationConfig = generationConfig {
             responseMimeType = "application/json"
-            responseSchema = jsonSchema
         }
     )
 
@@ -46,6 +45,9 @@ class GeminiBrain(private val apiKey: String) {
         val prompt = """
             You are J.A.X. (Jagadeesh Agent X), an executive AI butler for Jagadeesh.
             Classify user message into TASK, MEMORY (Fact), or QUESTION.
+            
+            Respond strictly with valid JSON adhering to this schema:
+            $jsonSchema
             
             User message: "$input"
         """.trimIndent()
