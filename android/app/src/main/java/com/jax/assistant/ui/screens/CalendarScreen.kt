@@ -34,6 +34,8 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
+import com.jax.assistant.ui.screens.calendar.AddCalendarEventDialog
+
 @Composable
 fun CalendarScreen(
     tasks: List<TaskEntity>,
@@ -50,11 +52,13 @@ fun CalendarScreen(
     val selectedDateStr = selectedDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
 
     // Tasks for selected date or unscheduled tasks if "Today" is selected
-    val tasksForSelectedDate = tasks.filter { task ->
-        if (task.deadline.isNullOrBlank()) {
-            selectedDate == LocalDate.now()
-        } else {
-            task.deadline.contains(selectedDateStr) || task.deadline.contains("${selectedDate.dayOfMonth}")
+    val tasksForSelectedDate = remember(tasks, selectedDate, selectedDateStr) {
+        tasks.filter { task ->
+            if (task.deadline.isNullOrBlank()) {
+                selectedDate == LocalDate.now()
+            } else {
+                task.deadline.contains(selectedDateStr) || task.deadline.contains("${selectedDate.dayOfMonth}")
+            }
         }
     }
 
@@ -255,7 +259,7 @@ fun CalendarScreen(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(tasksForSelectedDate) { task ->
+                    items(tasksForSelectedDate, key = { it.id }) { task ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -306,86 +310,4 @@ fun CalendarScreen(
             )
         }
     }
-}
-
-@Composable
-fun AddCalendarEventDialog(
-    defaultDateStr: String,
-    onDismiss: () -> Unit,
-    onConfirm: (title: String, category: String, priority: String, deadline: String) -> Unit
-) {
-    var title by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("Work") }
-    var priority by remember { mutableStateOf("MED") }
-    var deadline by remember { mutableStateOf(defaultDateStr) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = SurfaceDark,
-        title = {
-            Text(text = "Schedule Event / Task", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Event Title", color = Color.Gray) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = CyanAccent,
-                        unfocusedBorderColor = Color.DarkGray,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = category,
-                    onValueChange = { category = it },
-                    label = { Text("Category (Work, Personal, Meeting)", color = Color.Gray) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = CyanAccent,
-                        unfocusedBorderColor = Color.DarkGray,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = deadline,
-                    onValueChange = { deadline = it },
-                    label = { Text("Scheduled Date (YYYY-MM-DD)", color = Color.Gray) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = CyanAccent,
-                        unfocusedBorderColor = Color.DarkGray,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (title.isNotBlank()) {
-                        onConfirm(title, category, priority, deadline)
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)
-            ) {
-                Text(text = "Save to Calendar", color = PureDark, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = "Cancel", color = Color.Gray)
-            }
-        }
-    )
 }

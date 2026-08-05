@@ -30,6 +30,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
+import com.jax.assistant.ui.screens.devconsole.DevConsoleButton
+import com.jax.assistant.ui.screens.devconsole.DevConsoleResultOutput
+
 @Composable
 fun DeveloperConsoleScreen(
     apiKey: String,
@@ -368,107 +371,10 @@ fun DeveloperConsoleScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         // Results Section
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "EXECUTION RESULT: $activeTestName",
-                color = CyanAccent,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-
-            if (isRunningTest) {
-                CircularProgressIndicator(
-                    color = CyanAccent,
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(SurfaceDark, shape = RoundedCornerShape(12.dp))
-                .border(1.dp, Color.DarkGray, shape = RoundedCornerShape(12.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (testResults.isEmpty()) {
-                Text(
-                    text = "Press any button above to run diagnostic tests.",
-                    color = Color.Gray,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            } else {
-                testResults.forEach { (key, value) ->
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = key.uppercase(),
-                            color = CyanAccent,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = value,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DevConsoleButton(
-    label: String,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.height(44.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = SurfaceDark,
-            contentColor = Color.White
-        ),
-        shape = RoundedCornerShape(10.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, CyanAccent.copy(alpha = 0.4f)),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = null,
-                tint = CyanAccent,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = label,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-        }
+        DevConsoleResultOutput(
+            activeTestName = activeTestName,
+            isRunningTest = isRunningTest,
+            testResults = testResults
+        )
     }
 }

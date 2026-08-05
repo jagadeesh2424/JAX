@@ -303,7 +303,8 @@ class GeminiProvider : AIProvider {
         exception: Exception?
     ) {
         val cleanModel = modelId.removePrefix("models/").trim()
-        val url = "$REST_ENDPOINT_BASE/models/$cleanModel:generateContent?key=${if (apiKey.length > 8) apiKey.take(6) + "..." else "INVALID"}"
+        val maskedKey = if (apiKey.isNotBlank()) "REDACTED" else "NONE"
+        val url = "$REST_ENDPOINT_BASE/models/$cleanModel:generateContent?key=$maskedKey"
         val stackTrace = exception?.stackTraceToString() ?: "No stacktrace"
 
         val logOutput = """

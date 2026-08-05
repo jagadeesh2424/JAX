@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">J.A.X. Assistant</string>
+    <string name="tab_chat">OmniChat</string>
+    <string name="tab_tasks">Tasks</string>
+    <string name="tab_memory">Memory Vault</string>
+    <string name="tab_calendar">Calendar</string>
+    <string name="tab_briefing">Daily Briefing</string>
+    <string name="tab_settings">Settings</string>
+    <string name="tab_dev_console">Dev Console</string>
+</resources>

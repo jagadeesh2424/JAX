@@ -28,8 +28,8 @@ fun DailyBriefingScreen(
     onSpeakBriefing: (String) -> Unit,
     onStopSpeaking: () -> Unit
 ) {
-    val pendingTasks = tasks.filter { !it.isCompleted }
-    val highPriorityCount = pendingTasks.count { it.priority.lowercase() == "high" }
+    val pendingTasks = remember(tasks) { tasks.filter { !it.isCompleted } }
+    val highPriorityCount = remember(pendingTasks) { pendingTasks.count { it.priority.lowercase() == "high" } }
 
     val briefingText = remember(tasks, facts) {
         val taskSummary = if (pendingTasks.isNotEmpty()) {

@@ -33,8 +33,10 @@ fun TaskDashboardScreen(
 
     val categories = listOf("All", "Work", "Personal", "Finance", "General")
 
-    val filteredTasks = tasks.filter {
-        if (selectedCategory == "All") true else it.category.equals(selectedCategory, ignoreCase = true)
+    val filteredTasks = remember(tasks, selectedCategory) {
+        tasks.filter {
+            if (selectedCategory == "All") true else it.category.equals(selectedCategory, ignoreCase = true)
+        }
     }
 
     Box(
@@ -117,7 +119,7 @@ fun TaskDashboardScreen(
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filteredTasks) { task ->
+                    items(filteredTasks, key = { it.id }) { task ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

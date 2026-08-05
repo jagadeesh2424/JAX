@@ -103,7 +103,7 @@ fun MemoryVaultScreen(
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(facts) { fact ->
+                    items(facts, key = { it.id }) { fact ->
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
