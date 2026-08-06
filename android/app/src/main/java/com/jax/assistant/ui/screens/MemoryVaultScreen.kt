@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.ui.theme.CyanAccent
+import com.jax.assistant.executive.knowledge.KnowledgeWorkspaceEngine
+import com.jax.assistant.ui.screens.knowledge.KnowledgeWorkspaceScreen
 import com.jax.assistant.ui.theme.GoldAccent
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
@@ -26,8 +28,10 @@ import com.jax.assistant.ui.theme.SurfaceDark
 fun MemoryVaultScreen(
     facts: List<FactEntity>,
     onSearch: (String) -> Unit,
-    onAddFact: (title: String, category: String, details: String) -> Unit
+    onAddFact: (title: String, category: String, details: String) -> Unit,
+    knowledgeEngine: KnowledgeWorkspaceEngine? = null
 ) {
+    var selectedVaultTab by remember { mutableStateOf(0) } // 0: Fact Vault, 1: Block Workspace
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
 
@@ -53,19 +57,45 @@ fun MemoryVaultScreen(
                     fontWeight = FontWeight.Bold
                 )
 
-                Button(
-                    onClick = { showAddDialog = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Memory", tint = PureDark)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "Add Note/Fact", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TabRow(
+                        selectedTabIndex = selectedVaultTab,
+                        containerColor = SurfaceDark,
+                        contentColor = CyanAccent,
+                        modifier = Modifier.width(220.dp)
+                    ) {
+                        Tab(
+                            selected = selectedVaultTab == 0,
+                            onClick = { selectedVaultTab = 0 },
+                            text = { Text("Facts", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedVaultTab == 1,
+                            onClick = { selectedVaultTab = 1 },
+                            text = { Text("Workspace", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                    }
+
+                    if (selectedVaultTab == 0) {
+                        Button(
+                            onClick = { showAddDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Memory", tint = PureDark)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = "Add", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            if (selectedVaultTab == 1 && knowledgeEngine != null) {
+                KnowledgeWorkspaceScreen(knowledgeEngine = knowledgeEngine, facts = facts)
+            } else {
 
             // Search Bar
             TextField(
@@ -136,7 +166,8 @@ fun MemoryVaultScreen(
                     }
                 }
             }
-        }
+            } // End of else block for selectedVaultTab == 0
+        } // End of Column
 
         if (showAddDialog) {
             AddMemoryDialog(

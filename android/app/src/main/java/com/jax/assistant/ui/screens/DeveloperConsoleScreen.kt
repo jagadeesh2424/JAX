@@ -366,6 +366,65 @@ fun DeveloperConsoleScreen(
                     }
                 )
             }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Button 7: Test Executive Layer
+                DevConsoleButton(
+                    label = "Test Executive Layer",
+                    modifier = Modifier.weight(1f),
+                    enabled = !isRunningTest,
+                    onClick = {
+                        activeTestName = "Test Executive Intelligence Layer"
+                        val convMgr = com.jax.assistant.executive.conversation.ConversationManager()
+                        val planner = com.jax.assistant.executive.planner.Planner(convMgr)
+                        val ctxMgr = com.jax.assistant.executive.context.ContextManager()
+
+                        val testPrompt = "Book dentist appointment"
+                        val planResult = planner.plan(testPrompt, ctxMgr.contextState.value)
+
+                        testResults = mapOf(
+                            "Component" to "Executive Intelligence Layer",
+                            "Input Test Prompt" to testPrompt,
+                            "Context State" to ctxMgr.getContextSummary(),
+                            "Detected Intent" to planResult.intent.name,
+                            "Assigned Agent" to planResult.assignedAgent,
+                            "Requires Slot Filling" to "${planResult.requiresSlotFilling}",
+                            "Missing Slot Question" to (planResult.missingSlotQuestion ?: "None"),
+                            "Extracted Parameters" to planResult.extractedParameters.toString(),
+                            "Status" to "Executive Layer Operational"
+                        )
+                    }
+                )
+
+                // Button 8: Test Executive Briefing & Knowledge Graph
+                DevConsoleButton(
+                    label = "Test Briefing & Graph",
+                    modifier = Modifier.weight(1f),
+                    enabled = !isRunningTest,
+                    onClick = {
+                        activeTestName = "Test Executive Briefing & Graph"
+                        val briefingEngine = com.jax.assistant.executive.briefing.ExecutiveBriefingEngine()
+                        val ctxMgr = com.jax.assistant.executive.context.ContextManager()
+                        val graph = com.jax.assistant.executive.graph.KnowledgeGraph()
+
+                        val briefingContent = briefingEngine.generateBriefing(emptyList(), emptyList(), ctxMgr.contextState.value)
+                        val diag = briefingEngine.diagnostics.value
+
+                        testResults = mapOf(
+                            "Component" to "Briefing Engine & Graph",
+                            "Last Execution Time" to diag.lastExecutionTime,
+                            "Next Scheduled Time" to diag.nextScheduledTime,
+                            "Duration (ms)" to "${diag.lastExecutionDurationMs}",
+                            "Focus Recommendation" to briefingContent.focusRecommendation,
+                            "Knowledge Graph Summary" to graph.getGraphSummary(),
+                            "Status" to "Briefing & Graph Operational"
+                        )
+                    }
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))

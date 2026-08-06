@@ -12,6 +12,7 @@ import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.db.AppDatabase
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
+import com.jax.assistant.executive.ExecutiveIntelligenceEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
@@ -23,6 +24,7 @@ class JaxRepository(private val context: Context) {
 
     private val aiService: GeminiAIService
     private val geminiBrain: GeminiBrain
+    val executiveEngine: ExecutiveIntelligenceEngine by lazy { ExecutiveIntelligenceEngine(this) }
 
     init {
         val storedKey = prefs.getString("gemini_api_key", null)
@@ -115,6 +117,13 @@ class JaxRepository(private val context: Context) {
     fun searchFacts(query: String): Flow<List<FactEntity>> = db.factDao().searchFacts(query)
 
     suspend fun processUserInput(input: String, factsList: List<FactEntity> = emptyList()): JaxParseResult {
+        // Step 1: Pass input to Executive Intelligence Engine (Planner, ConversationManager, Agent Framework)
+        val execResult = executiveEngine.processUserPrompt(input)
+        if (execResult.handledLocallyByAgent) {
+            return JaxParseResult.QuestionResult(execResult.responseText)
+        }
+
+        // Step 2: Fallback to AI Router & Gemini Brain for complex generation
         val selectedModel = getSelectedModel()
         return geminiBrain.processUserInput(input, selectedModel, factsList)
     }
