@@ -21,11 +21,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 import java.time.LocalDate
@@ -311,3 +313,38 @@ fun CalendarScreen(
         }
     }
 }
+
+@Preview(showBackground = true, name = "Calendar Screen Preview")
+@Composable
+fun CalendarScreenPreview() {
+    val today = LocalDate.now().toString()
+    val sampleTasks = listOf(
+        TaskEntity(
+            id = 1,
+            title = "Executive Board Sync",
+            category = "Work",
+            priority = "HIGH",
+            deadline = today,
+            isCompleted = false,
+            createdAt = System.currentTimeMillis()
+        ),
+        TaskEntity(
+            id = 2,
+            title = "Review Architecture Doc",
+            category = "Work",
+            priority = "MED",
+            deadline = today,
+            isCompleted = true,
+            createdAt = System.currentTimeMillis()
+        )
+    )
+
+    JAXAssistantTheme {
+        CalendarScreen(
+            tasks = sampleTasks,
+            onToggleTask = {},
+            onAddTaskForDate = { _, _, _, _ -> }
+        )
+    }
+}
+

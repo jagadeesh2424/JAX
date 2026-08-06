@@ -17,9 +17,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.ui.theme.CyanAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -140,3 +142,37 @@ fun OmniChatScreen(
         }
     }
 }
+
+@Preview(showBackground = true, name = "OmniChat Screen Preview")
+@Composable
+fun OmniChatScreenPreview() {
+    val sampleMessages = listOf(
+        ComposeChatMessage(
+            id = "1",
+            text = "Hello J.A.X., can you summarize my schedule for today?",
+            isUser = true,
+            timestamp = "09:00 AM"
+        ),
+        ComposeChatMessage(
+            id = "2",
+            text = "Good morning! You have 3 tasks due today: Finalize Q3 budget at 10:00 AM, Team sync at 2:00 PM, and Code review at 4:30 PM.",
+            isUser = false,
+            timestamp = "09:01 AM"
+        ),
+        ComposeChatMessage(
+            id = "3",
+            text = "Great! Please set a reminder for the budget meeting.",
+            isUser = true,
+            timestamp = "09:02 AM"
+        )
+    )
+
+    JAXAssistantTheme {
+        OmniChatScreen(
+            messages = sampleMessages,
+            onSendMessage = {},
+            onMicClick = {}
+        )
+    }
+}
+

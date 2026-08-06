@@ -14,11 +14,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -277,3 +279,46 @@ fun AddTaskDialog(
         }
     )
 }
+
+@Preview(showBackground = true, name = "TaskDashboard Screen Preview")
+@Composable
+fun TaskDashboardScreenPreview() {
+    val sampleTasks = listOf(
+        TaskEntity(
+            id = 1,
+            title = "Finalize Q3 Budget Proposal",
+            category = "Finance",
+            priority = "HIGH",
+            deadline = "2026-08-06",
+            isCompleted = false,
+            createdAt = System.currentTimeMillis()
+        ),
+        TaskEntity(
+            id = 2,
+            title = "Team Standup Sync",
+            category = "Work",
+            priority = "MED",
+            deadline = "2026-08-06",
+            isCompleted = true,
+            createdAt = System.currentTimeMillis()
+        ),
+        TaskEntity(
+            id = 3,
+            title = "Renew Vehicle Insurance",
+            category = "Personal",
+            priority = "LOW",
+            deadline = "2026-08-10",
+            isCompleted = false,
+            createdAt = System.currentTimeMillis()
+        )
+    )
+
+    JAXAssistantTheme {
+        TaskDashboardScreen(
+            tasks = sampleTasks,
+            onToggleTask = {},
+            onAddTask = { _, _, _, _ -> }
+        )
+    }
+}
+

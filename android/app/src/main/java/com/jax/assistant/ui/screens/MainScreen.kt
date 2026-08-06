@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.ai.ModelInfo
@@ -28,6 +29,7 @@ import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.theme.CyanAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -204,3 +206,39 @@ fun MainScreen(
     }
 }
 }
+
+@Preview(showBackground = true, name = "Main Screen Preview")
+@Composable
+fun MainScreenPreview() {
+    val sampleMessages = listOf(
+        ComposeChatMessage("1", "Hello J.A.X.!", true, "09:00 AM"),
+        ComposeChatMessage("2", "Hello Jagadeesh! How can I assist you today?", false, "09:01 AM")
+    )
+
+    val sampleTasks = listOf(
+        TaskEntity(1, "Finalize Q3 Budget Proposal", "Finance", "HIGH", "2026-08-06", false, System.currentTimeMillis())
+    )
+
+    val sampleFacts = listOf(
+        FactEntity(1, "Office Wi-Fi Credentials", "Tech", "Key: QuantumSecret2026!", System.currentTimeMillis())
+    )
+
+    JAXAssistantTheme {
+        MainScreen(
+            messages = sampleMessages,
+            tasks = sampleTasks,
+            facts = sampleFacts,
+            apiKey = "AIzaSyPreviewKeyMock123",
+            onSendMessage = {},
+            onToggleTask = {},
+            onAddTask = { _, _, _, _ -> },
+            onSearchFacts = {},
+            onAddFact = { _, _, _ -> },
+            onUpdateApiKey = {},
+            onMicClick = {},
+            onSpeakBriefing = {},
+            onStopSpeaking = {}
+        )
+    }
+}
+

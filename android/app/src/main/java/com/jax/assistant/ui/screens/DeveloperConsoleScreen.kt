@@ -17,12 +17,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.ai.*
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.theme.CyanAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 import kotlinx.coroutines.Dispatchers
@@ -378,3 +380,18 @@ fun DeveloperConsoleScreen(
         )
     }
 }
+
+@Preview(showBackground = true, name = "Developer Console Screen Preview")
+@Composable
+fun DeveloperConsoleScreenPreview() {
+    JAXAssistantTheme {
+        DeveloperConsoleScreen(
+            apiKey = "AIzaSyPreviewKeyMock123",
+            selectedModel = "gemini-2.0-flash",
+            taskCount = 10,
+            factCount = 5,
+            onClose = {}
+        )
+    }
+}
+

@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.ai.ModelInfo
@@ -30,6 +31,7 @@ import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -492,4 +494,43 @@ private fun DiagnosticRow(label: String, value: String) {
         )
     }
 }
+
+@Preview(showBackground = true, name = "Settings Screen Preview")
+@Composable
+fun SettingsScreenPreview() {
+    val sampleModelCatalog = listOf(
+        ModelInfo(
+            id = "gemini-2.0-flash",
+            displayName = "Gemini 2.0 Flash (Fast)",
+            priority = 1,
+            supportedMethods = listOf("generateContent"),
+            enabled = true,
+            cooldownUntil = 0L,
+            averageLatency = 340L
+        ),
+        ModelInfo(
+            id = "gemini-1.5-pro",
+            displayName = "Gemini 1.5 Pro (Deep)",
+            priority = 2,
+            supportedMethods = listOf("generateContent"),
+            enabled = true,
+            cooldownUntil = 0L,
+            averageLatency = 820L
+        )
+    )
+
+    JAXAssistantTheme {
+        SettingsScreen(
+            apiKey = "AIzaSyPreviewMockKey123456789",
+            onUpdateApiKey = {},
+            selectedModel = "gemini-2.0-flash",
+            developerMode = true,
+            modelCatalog = sampleModelCatalog,
+            taskCount = 12,
+            factCount = 8,
+            onClearAllData = {}
+        )
+    }
+}
+
 

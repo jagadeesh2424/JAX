@@ -12,12 +12,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -178,3 +180,48 @@ fun DailyBriefingScreen(
         }
     }
 }
+
+@Preview(showBackground = true, name = "DailyBriefing Screen Preview")
+@Composable
+fun DailyBriefingScreenPreview() {
+    val sampleTasks = listOf(
+        TaskEntity(
+            id = 1,
+            title = "Finalize Q3 Budget Proposal",
+            category = "Finance",
+            priority = "HIGH",
+            deadline = "2026-08-06",
+            isCompleted = false,
+            createdAt = System.currentTimeMillis()
+        ),
+        TaskEntity(
+            id = 2,
+            title = "Deploy Assistant v2",
+            category = "Work",
+            priority = "HIGH",
+            deadline = "2026-08-06",
+            isCompleted = false,
+            createdAt = System.currentTimeMillis()
+        )
+    )
+
+    val sampleFacts = listOf(
+        FactEntity(
+            id = 1,
+            title = "Meeting Room Keycode",
+            category = "Work",
+            details = "Door PIN: 4921#",
+            createdAt = System.currentTimeMillis()
+        )
+    )
+
+    JAXAssistantTheme {
+        DailyBriefingScreen(
+            tasks = sampleTasks,
+            facts = sampleFacts,
+            onSpeakBriefing = {},
+            onStopSpeaking = {}
+        )
+    }
+}
+

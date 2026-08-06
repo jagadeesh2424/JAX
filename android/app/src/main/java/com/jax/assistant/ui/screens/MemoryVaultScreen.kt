@@ -13,11 +13,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -229,3 +231,40 @@ fun AddMemoryDialog(
         }
     )
 }
+
+@Preview(showBackground = true, name = "MemoryVault Screen Preview")
+@Composable
+fun MemoryVaultScreenPreview() {
+    val sampleFacts = listOf(
+        FactEntity(
+            id = 1,
+            title = "Office Wi-Fi Credentials",
+            category = "Tech",
+            details = "SSID: JAX_5G_Network, Key: QuantumSecret2026!",
+            createdAt = System.currentTimeMillis()
+        ),
+        FactEntity(
+            id = 2,
+            title = "Passport Information",
+            category = "Personal",
+            details = "Passport # Z-9823411, Expires Nov 2030",
+            createdAt = System.currentTimeMillis()
+        ),
+        FactEntity(
+            id = 3,
+            title = "Flight Booking Ref",
+            category = "Travel",
+            details = "Confirmation: JAX88A, Gate B12 Departure 10:15 AM",
+            createdAt = System.currentTimeMillis()
+        )
+    )
+
+    JAXAssistantTheme {
+        MemoryVaultScreen(
+            facts = sampleFacts,
+            onSearch = {},
+            onAddFact = { _, _, _ -> }
+        )
+    }
+}
+
