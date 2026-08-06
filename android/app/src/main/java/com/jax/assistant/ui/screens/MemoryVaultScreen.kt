@@ -237,21 +237,21 @@ fun AddMemoryDialog(
 fun MemoryVaultScreenPreview() {
     val sampleFacts = listOf(
         FactEntity(
-            id = 1,
+            id = "1",
             title = "Office Wi-Fi Credentials",
             category = "Tech",
             details = "SSID: JAX_5G_Network, Key: QuantumSecret2026!",
             createdAt = System.currentTimeMillis()
         ),
         FactEntity(
-            id = 2,
+            id = "2",
             title = "Passport Information",
             category = "Personal",
             details = "Passport # Z-9823411, Expires Nov 2030",
             createdAt = System.currentTimeMillis()
         ),
         FactEntity(
-            id = 3,
+            id = "3",
             title = "Flight Booking Ref",
             category = "Travel",
             details = "Confirmation: JAX88A, Gate B12 Departure 10:15 AM",

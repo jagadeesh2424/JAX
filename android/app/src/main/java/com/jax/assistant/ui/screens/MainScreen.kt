@@ -216,11 +216,11 @@ fun MainScreenPreview() {
     )
 
     val sampleTasks = listOf(
-        TaskEntity(1, "Finalize Q3 Budget Proposal", "Finance", "HIGH", "2026-08-06", false, System.currentTimeMillis())
+        TaskEntity("1", "Finalize Q3 Budget Proposal", "Finance", "HIGH", "2026-08-06", false, System.currentTimeMillis())
     )
 
     val sampleFacts = listOf(
-        FactEntity(1, "Office Wi-Fi Credentials", "Tech", "Key: QuantumSecret2026!", System.currentTimeMillis())
+        FactEntity("1", "Office Wi-Fi Credentials", "Tech", "Key: QuantumSecret2026!", System.currentTimeMillis())
     )
 
     JAXAssistantTheme {

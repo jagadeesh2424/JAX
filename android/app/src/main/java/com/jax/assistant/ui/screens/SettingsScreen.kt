@@ -503,7 +503,10 @@ fun SettingsScreenPreview() {
             id = "gemini-2.0-flash",
             displayName = "Gemini 2.0 Flash (Fast)",
             priority = 1,
-            supportedMethods = listOf("generateContent"),
+            speedScore = 9,
+            reasoningScore = 7,
+            contextWindow = 1000000,
+            supportedMethods = "generateContent",
             enabled = true,
             cooldownUntil = 0L,
             averageLatency = 340L
@@ -512,7 +515,10 @@ fun SettingsScreenPreview() {
             id = "gemini-1.5-pro",
             displayName = "Gemini 1.5 Pro (Deep)",
             priority = 2,
-            supportedMethods = listOf("generateContent"),
+            speedScore = 6,
+            reasoningScore = 9,
+            contextWindow = 2000000,
+            supportedMethods = "generateContent",
             enabled = true,
             cooldownUntil = 0L,
             averageLatency = 820L

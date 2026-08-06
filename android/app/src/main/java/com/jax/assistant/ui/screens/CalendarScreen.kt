@@ -320,7 +320,7 @@ fun CalendarScreenPreview() {
     val today = LocalDate.now().toString()
     val sampleTasks = listOf(
         TaskEntity(
-            id = 1,
+            id = "1",
             title = "Executive Board Sync",
             category = "Work",
             priority = "HIGH",
@@ -329,7 +329,7 @@ fun CalendarScreenPreview() {
             createdAt = System.currentTimeMillis()
         ),
         TaskEntity(
-            id = 2,
+            id = "2",
             title = "Review Architecture Doc",
             category = "Work",
             priority = "MED",

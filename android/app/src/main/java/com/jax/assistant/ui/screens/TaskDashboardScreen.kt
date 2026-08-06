@@ -285,7 +285,7 @@ fun AddTaskDialog(
 fun TaskDashboardScreenPreview() {
     val sampleTasks = listOf(
         TaskEntity(
-            id = 1,
+            id = "1",
             title = "Finalize Q3 Budget Proposal",
             category = "Finance",
             priority = "HIGH",
@@ -294,7 +294,7 @@ fun TaskDashboardScreenPreview() {
             createdAt = System.currentTimeMillis()
         ),
         TaskEntity(
-            id = 2,
+            id = "2",
             title = "Team Standup Sync",
             category = "Work",
             priority = "MED",
@@ -303,7 +303,7 @@ fun TaskDashboardScreenPreview() {
             createdAt = System.currentTimeMillis()
         ),
         TaskEntity(
-            id = 3,
+            id = "3",
             title = "Renew Vehicle Insurance",
             category = "Personal",
             priority = "LOW",

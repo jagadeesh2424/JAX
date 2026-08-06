@@ -186,7 +186,7 @@ fun DailyBriefingScreen(
 fun DailyBriefingScreenPreview() {
     val sampleTasks = listOf(
         TaskEntity(
-            id = 1,
+            id = "1",
             title = "Finalize Q3 Budget Proposal",
             category = "Finance",
             priority = "HIGH",
@@ -195,7 +195,7 @@ fun DailyBriefingScreenPreview() {
             createdAt = System.currentTimeMillis()
         ),
         TaskEntity(
-            id = 2,
+            id = "2",
             title = "Deploy Assistant v2",
             category = "Work",
             priority = "HIGH",
@@ -207,7 +207,7 @@ fun DailyBriefingScreenPreview() {
 
     val sampleFacts = listOf(
         FactEntity(
-            id = 1,
+            id = "1",
             title = "Meeting Room Keycode",
             category = "Work",
             details = "Door PIN: 4921#",
