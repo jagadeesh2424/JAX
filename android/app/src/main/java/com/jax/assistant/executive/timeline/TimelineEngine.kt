@@ -33,15 +33,16 @@ class TimelineEngine {
 
         // 2. Projection from Memory Facts (Birthdays, Anniversaries, Reminders)
         facts.forEach { fact ->
-            val lower = fact.factText.lowercase()
+            val factCombinedText = "${fact.title} ${fact.details}"
+            val lower = factCombinedText.lowercase()
             when {
                 lower.contains("birthday") || lower.contains("born on") -> {
                     items.add(
                         TimelineItem(
                             id = "timeline_fact_${fact.id}",
-                            title = "🎂 ${fact.factText}",
+                            title = "🎂 $factCombinedText",
                             category = fact.category,
-                            dateString = extractDateFromText(fact.factText),
+                            dateString = extractDateFromText(factCombinedText),
                             sourceType = TimelineSourceType.BIRTHDAY,
                             originalEntityId = fact.id
                         )
@@ -51,9 +52,9 @@ class TimelineEngine {
                     items.add(
                         TimelineItem(
                             id = "timeline_fact_${fact.id}",
-                            title = "💍 ${fact.factText}",
+                            title = "💍 $factCombinedText",
                             category = fact.category,
-                            dateString = extractDateFromText(fact.factText),
+                            dateString = extractDateFromText(factCombinedText),
                             sourceType = TimelineSourceType.ANNIVERSARY,
                             originalEntityId = fact.id
                         )
@@ -63,9 +64,9 @@ class TimelineEngine {
                     items.add(
                         TimelineItem(
                             id = "timeline_fact_${fact.id}",
-                            title = "📅 ${fact.factText}",
+                            title = "📅 $factCombinedText",
                             category = fact.category,
-                            dateString = extractDateFromText(fact.factText),
+                            dateString = extractDateFromText(factCombinedText),
                             sourceType = TimelineSourceType.CALENDAR_EVENT,
                             originalEntityId = fact.id
                         )

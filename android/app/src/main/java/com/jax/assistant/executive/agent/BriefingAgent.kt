@@ -40,7 +40,7 @@ class BriefingAgent(private val repository: JaxRepository) : AssistantAgent {
         if (facts.isNotEmpty()) {
             briefingBuilder.append("\n💡 MEMORY HIGHLIGHTS:\n")
             facts.take(2).forEach { fact ->
-                briefingBuilder.append("  - ${fact.factText}\n")
+                briefingBuilder.append("  - ${fact.title}: ${fact.details}\n")
             }
         }
 

@@ -25,8 +25,9 @@ class MemoryAgent(private val repository: JaxRepository) : AssistantAgent {
 
                 val newFact = FactEntity(
                     id = UUID.randomUUID().toString(),
-                    factText = factContent,
+                    title = if (factContent.length > 30) factContent.take(30) + "..." else factContent,
                     category = category,
+                    details = factContent,
                     createdAt = System.currentTimeMillis()
                 )
 
@@ -34,7 +35,7 @@ class MemoryAgent(private val repository: JaxRepository) : AssistantAgent {
 
                 AgentExecutionResult(
                     success = true,
-                    outputMessage = "Memory saved to Vault!\n\n• Fact: \"${newFact.factText}\"\n• Category: ${newFact.category}",
+                    outputMessage = "Memory saved to Vault!\n\n• Fact: \"${newFact.details}\"\n• Category: ${newFact.category}",
                     data = mapOf("factId" to newFact.id)
                 )
             }
@@ -48,7 +49,7 @@ class MemoryAgent(private val repository: JaxRepository) : AssistantAgent {
                     )
                 } else {
                     val formatted = facts.take(10).joinToString("\n") { fact ->
-                        "• [${fact.category}] ${fact.factText}"
+                        "• [${fact.category}] ${fact.title}: ${fact.details}"
                     }
                     AgentExecutionResult(
                         success = true,

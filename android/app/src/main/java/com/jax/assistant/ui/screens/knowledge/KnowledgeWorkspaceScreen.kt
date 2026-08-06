@@ -29,7 +29,6 @@ import com.jax.assistant.executive.knowledge.KnowledgeBlock
 import com.jax.assistant.executive.knowledge.KnowledgePage
 import com.jax.assistant.executive.knowledge.KnowledgeWorkspaceEngine
 import com.jax.assistant.ui.theme.CyanAccent
-import com.jax.assistant.ui.theme.DarkCardBg
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
 
@@ -101,7 +100,7 @@ fun KnowledgeWorkspaceScreen(
                 Box(
                     modifier = Modifier
                         .background(
-                            if (isSelected) CyanAccent.copy(alpha = 0.2f) else DarkCardBg,
+                            if (isSelected) CyanAccent.copy(alpha = 0.2f) else SurfaceDark,
                             shape = RoundedCornerShape(8.dp)
                         )
                         .border(
@@ -243,7 +242,7 @@ fun KnowledgeWorkspaceScreen(
                     Text("Cancel", color = Color.Gray)
                 }
             },
-            containerColor = DarkCardBg
+            containerColor = SurfaceDark
         )
     }
 }
@@ -252,7 +251,7 @@ fun KnowledgeWorkspaceScreen(
 fun BlockTypeButton(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .background(DarkCardBg, shape = RoundedCornerShape(6.dp))
+            .background(SurfaceDark, shape = RoundedCornerShape(6.dp))
             .clickable { onClick() }
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
@@ -338,7 +337,7 @@ fun BlockItemView(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .background(DarkCardBg, shape = RoundedCornerShape(4.dp))
+                        .background(SurfaceDark, shape = RoundedCornerShape(4.dp))
                         .padding(start = 8.dp)
                 ) {
                     OutlinedTextField(

@@ -43,9 +43,10 @@ class ExecutiveBriefingEngine {
         val highPriorityTasks = pendingTasks.filter { it.priority.equals("HIGH", ignoreCase = true) }
 
         val birthdays = facts.filter {
-            it.factText.contains("birthday", ignoreCase = true) ||
-            it.factText.contains("anniversary", ignoreCase = true) ||
-            it.factText.contains("event", ignoreCase = true)
+            val text = "${it.title} ${it.details}"
+            text.contains("birthday", ignoreCase = true) ||
+            text.contains("anniversary", ignoreCase = true) ||
+            text.contains("event", ignoreCase = true)
         }
 
         val highlights = facts.filter { !birthdays.contains(it) }.take(3)

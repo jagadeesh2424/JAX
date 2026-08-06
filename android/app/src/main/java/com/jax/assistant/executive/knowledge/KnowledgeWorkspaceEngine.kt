@@ -116,11 +116,11 @@ class KnowledgeWorkspaceEngine {
 
         val existingTitles = _pages.value.map { it.title }.toSet()
         facts.forEach { fact ->
-            val pageTitle = if (fact.factText.length > 30) fact.factText.take(30) + "..." else fact.factText
+            val pageTitle = fact.title.ifBlank { if (fact.details.length > 30) fact.details.take(30) + "..." else fact.details }
             if (!existingTitles.contains(pageTitle)) {
                 val blocks = listOf(
                     KnowledgeBlock(type = BlockType.HEADING, content = fact.category),
-                    KnowledgeBlock(type = BlockType.PARAGRAPH, content = fact.factText),
+                    KnowledgeBlock(type = BlockType.PARAGRAPH, content = fact.details),
                     KnowledgeBlock(type = BlockType.TAGS, content = "Migrated, ${fact.category}")
                 )
                 createPage(
