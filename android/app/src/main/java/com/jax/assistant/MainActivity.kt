@@ -94,8 +94,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onStopSpeaking = {
                         voiceManager.stopSpeaking()
-                    },
-                    knowledgeEngine = viewModel.knowledgeEngine
+                    }
                 )
             }
         }

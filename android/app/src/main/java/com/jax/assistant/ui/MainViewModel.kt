@@ -45,9 +45,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val requestLogs: StateFlow<List<RequestLog>> = repository.requestLogs
 
-    val executiveEngine = repository.executiveEngine
-    val knowledgeEngine = repository.executiveEngine.knowledgeEngine
-
     private val _isProcessing = MutableStateFlow<Boolean>(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 

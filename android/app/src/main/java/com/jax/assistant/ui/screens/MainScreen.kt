@@ -53,8 +53,7 @@ fun MainScreen(
     onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
     onMicClick: () -> Unit,
     onSpeakBriefing: (String) -> Unit,
-    onStopSpeaking: () -> Unit,
-    knowledgeEngine: com.jax.assistant.executive.knowledge.KnowledgeWorkspaceEngine? = null
+    onStopSpeaking: () -> Unit
 ) {
     var activeTab by remember { mutableStateOf(0) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings
     var showDevConsole by remember { mutableStateOf(false) }
@@ -182,7 +181,7 @@ fun MainScreen(
                         onAddTask(title, category, priority, deadline)
                     }
                 )
-                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts, onAddFact = onAddFact, knowledgeEngine = knowledgeEngine)
+                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts, onAddFact = onAddFact)
                 4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing, onStopSpeaking = onStopSpeaking)
                 5 -> SettingsScreen(
                     apiKey = apiKey,
