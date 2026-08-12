@@ -1,0 +1,353 @@
+package com.jax.assistant.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.SpaceDashboard
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.RequestLog
+import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.db.FactEntity
+import com.jax.assistant.db.GoalEntity
+import com.jax.assistant.db.HabitEntity
+import com.jax.assistant.db.NoteBlockEntity
+import com.jax.assistant.db.NotePageEntity
+import com.jax.assistant.db.ProjectEntity
+import com.jax.assistant.db.TaskEntity
+import com.jax.assistant.ui.theme.CyanAccent
+import com.jax.assistant.ui.theme.JAXAssistantTheme
+import com.jax.assistant.ui.theme.PureDark
+import com.jax.assistant.ui.theme.SurfaceDark
+
+@Composable
+fun MainScreen(
+    messages: List<ComposeChatMessage>,
+    tasks: List<TaskEntity>,
+    facts: List<FactEntity>,
+    apiKey: String,
+    selectedModel: String = "gemini-2.0-flash",
+    developerMode: Boolean = false,
+    modelCatalog: List<ModelInfo> = emptyList(),
+    requestLogs: List<RequestLog> = emptyList(),
+    onSendMessage: (String) -> Unit,
+    onToggleTask: (TaskEntity) -> Unit,
+    onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit,
+    onSearchFacts: (String) -> Unit,
+    onAddFact: (title: String, category: String, details: String) -> Unit,
+    onUpdateApiKey: (String) -> Unit,
+    onUpdateSelectedModel: (String) -> Unit = {},
+    onToggleDeveloperMode: (Boolean) -> Unit = {},
+    onRunHealthCheck: ((onResult: (String) -> Unit) -> Unit)? = null,
+    onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
+    pages: List<NotePageEntity> = emptyList(),
+    selectedPageId: String? = null,
+    blocks: List<NoteBlockEntity> = emptyList(),
+    noteSearchResults: List<NotePageEntity> = emptyList(),
+    relatedPages: List<NotePageEntity> = emptyList(),
+    onOpenPage: (String) -> Unit = {},
+    onClosePage: () -> Unit = {},
+    onSearchNotes: (String) -> Unit = {},
+    onCreatePage: (title: String, category: String, tags: String) -> Unit = { _, _, _ -> },
+    onRenamePage: (NotePageEntity, String) -> Unit = { _, _ -> },
+    onUpdatePageTags: (NotePageEntity, String) -> Unit = { _, _ -> },
+    onDeletePage: (NotePageEntity) -> Unit = {},
+    onAddBlock: (type: String) -> Unit = {},
+    onUpdateBlockContent: (NoteBlockEntity, String) -> Unit = { _, _ -> },
+    onToggleBlockChecked: (NoteBlockEntity) -> Unit = {},
+    onChangeBlockType: (NoteBlockEntity, String) -> Unit = { _, _ -> },
+    onDeleteBlock: (NoteBlockEntity) -> Unit = {},
+    onLinkPage: (String) -> Unit = {},
+    onUnlinkPage: (String) -> Unit = {},
+    goals: List<GoalEntity> = emptyList(),
+    projects: List<ProjectEntity> = emptyList(),
+    dailyPlan: String = "",
+    isPlanning: Boolean = false,
+    onGeneratePlan: () -> Unit = {},
+    onToggleGoalComplete: (GoalEntity) -> Unit = {},
+    onIncrementGoal: (GoalEntity, Int) -> Unit = { _, _ -> },
+    onAddGoal: (title: String, category: String, target: Int, deadline: String?) -> Unit = { _, _, _, _ -> },
+    onDeleteGoal: (GoalEntity) -> Unit = {},
+    onAddProject: (name: String, description: String) -> Unit = { _, _ -> },
+    onCycleProjectStatus: (ProjectEntity) -> Unit = {},
+    onDeleteProject: (ProjectEntity) -> Unit = {},
+    habits: List<HabitEntity> = emptyList(),
+    onAddHabit: (name: String, category: String) -> Unit = { _, _ -> },
+    onToggleHabit: (HabitEntity) -> Unit = {},
+    onDeleteHabit: (HabitEntity) -> Unit = {},
+    initialTab: Int = 0,
+    isListening: Boolean = false,
+    conversationMode: Boolean = false,
+    onToggleConversationMode: () -> Unit = {},
+    onMicClick: () -> Unit,
+    onSpeakBriefing: (String) -> Unit,
+    onStopSpeaking: () -> Unit
+) {
+    var activeTab by remember { mutableStateOf(initialTab) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings, 6: Notes, 7: Executive Dashboard
+    var showDevConsole by remember { mutableStateOf(false) }
+
+    if (showDevConsole) {
+        DeveloperConsoleScreen(
+            apiKey = apiKey,
+            selectedModel = selectedModel,
+            taskCount = tasks.size,
+            factCount = facts.size,
+            onClose = { showDevConsole = false }
+        )
+    } else {
+        Scaffold(
+        topBar = {
+            // Minimalist Header: "J.A.X. AI" + Status + Stop Voice Button + Settings Gear
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(PureDark)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "J.A.X. AI",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(
+                                if (apiKey.isNotBlank()) Color(0xFF00FF66) else Color.Yellow,
+                                CircleShape
+                            )
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Quick "Stop AI Voice" Pill Button
+                    Box(
+                        modifier = Modifier
+                            .background(Color.Red.copy(alpha = 0.2f), shape = RoundedCornerShape(16.dp))
+                            .clickable { onStopSpeaking() }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.VolumeOff, contentDescription = "Mute Voice", tint = Color.Red, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = "Mute", color = Color.Red, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    IconButton(onClick = { activeTab = 7 }) {
+                        Icon(
+                            Icons.Default.SpaceDashboard,
+                            contentDescription = "Executive Dashboard",
+                            tint = if (activeTab == 7) CyanAccent else Color.Gray
+                        )
+                    }
+
+                    IconButton(onClick = { activeTab = 5 }) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = if (activeTab == 5) CyanAccent else Color.Gray
+                        )
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            // Material 3 Navigation Bar
+            NavigationBar(
+                containerColor = SurfaceDark,
+                contentColor = Color.White
+            ) {
+                NavigationBarItem(
+                    selected = activeTab == 0,
+                    onClick = { activeTab = 0 },
+                    icon = { Icon(Icons.Default.Chat, contentDescription = "Chat") },
+                    label = { Text("Chat", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 1,
+                    onClick = { activeTab = 1 },
+                    icon = { Icon(Icons.Default.Checklist, contentDescription = "Tasks") },
+                    label = { Text("Tasks", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 2,
+                    onClick = { activeTab = 2 },
+                    icon = { Icon(Icons.Default.DateRange, contentDescription = "Calendar") },
+                    label = { Text("Calendar", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 3,
+                    onClick = { activeTab = 3 },
+                    icon = { Icon(Icons.Default.Description, contentDescription = "Memory Vault") },
+                    label = { Text("Memory", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 6,
+                    onClick = { activeTab = 6 },
+                    icon = { Icon(Icons.Default.EditNote, contentDescription = "Notes") },
+                    label = { Text("Notes", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+                NavigationBarItem(
+                    selected = activeTab == 4,
+                    onClick = { activeTab = 4 },
+                    icon = { Icon(Icons.Default.WbSunny, contentDescription = "Briefing") },
+                    label = { Text("Briefing", fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = CyanAccent, indicatorColor = CyanAccent.copy(alpha = 0.2f))
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            when (activeTab) {
+                0 -> OmniChatScreen(
+                    messages = messages,
+                    onSendMessage = onSendMessage,
+                    onMicClick = onMicClick,
+                    isListening = isListening,
+                    conversationMode = conversationMode,
+                    onToggleConversationMode = onToggleConversationMode
+                )
+                1 -> TaskDashboardScreen(tasks = tasks, onToggleTask = onToggleTask, onAddTask = onAddTask)
+                2 -> CalendarScreen(
+                    tasks = tasks,
+                    onToggleTask = onToggleTask,
+                    onAddTaskForDate = { title, category, priority, deadline ->
+                        onAddTask(title, category, priority, deadline)
+                    }
+                )
+                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts, onAddFact = onAddFact)
+                6 -> KnowledgeWorkspaceScreen(
+                    pages = pages,
+                    selectedPageId = selectedPageId,
+                    blocks = blocks,
+                    noteSearchResults = noteSearchResults,
+                    relatedPages = relatedPages,
+                    onOpenPage = onOpenPage,
+                    onClosePage = onClosePage,
+                    onSearchNotes = onSearchNotes,
+                    onCreatePage = onCreatePage,
+                    onRenamePage = onRenamePage,
+                    onUpdatePageTags = onUpdatePageTags,
+                    onDeletePage = onDeletePage,
+                    onAddBlock = onAddBlock,
+                    onUpdateBlockContent = onUpdateBlockContent,
+                    onToggleBlockChecked = onToggleBlockChecked,
+                    onChangeBlockType = onChangeBlockType,
+                    onDeleteBlock = onDeleteBlock,
+                    onLinkPage = onLinkPage,
+                    onUnlinkPage = onUnlinkPage
+                )
+                4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing, onStopSpeaking = onStopSpeaking)
+                7 -> ExecutiveDashboardScreen(
+                    tasks = tasks,
+                    goals = goals,
+                    projects = projects,
+                    dailyPlan = dailyPlan,
+                    isPlanning = isPlanning,
+                    onGeneratePlan = onGeneratePlan,
+                    onToggleTask = onToggleTask,
+                    onAddGoal = onAddGoal,
+                    onIncrementGoal = onIncrementGoal,
+                    onToggleGoalComplete = onToggleGoalComplete,
+                    onDeleteGoal = onDeleteGoal,
+                    onAddProject = onAddProject,
+                    onCycleProjectStatus = onCycleProjectStatus,
+                    onDeleteProject = onDeleteProject,
+                    habits = habits,
+                    onAddHabit = onAddHabit,
+                    onToggleHabit = onToggleHabit,
+                    onDeleteHabit = onDeleteHabit
+                )
+                5 -> SettingsScreen(
+                    apiKey = apiKey,
+                    onUpdateApiKey = onUpdateApiKey,
+                    selectedModel = selectedModel,
+                    onUpdateSelectedModel = onUpdateSelectedModel,
+                    onTestConnection = onTestConnection,
+                    developerMode = developerMode,
+                    onToggleDeveloperMode = onToggleDeveloperMode,
+                    onOpenDevConsole = { showDevConsole = true },
+                    modelCatalog = modelCatalog,
+                    requestLogs = requestLogs,
+                    onRunHealthCheck = onRunHealthCheck,
+                    taskCount = tasks.size,
+                    factCount = facts.size,
+                    onClearAllData = {}
+                )
+            }
+        }
+    }
+}
+}
+
+@Preview(showBackground = true, name = "Main Screen Preview")
+@Composable
+fun MainScreenPreview() {
+    val sampleMessages = listOf(
+        ComposeChatMessage("1", "Hello J.A.X.!", true, "09:00 AM"),
+        ComposeChatMessage("2", "Hello Jagadeesh! How can I assist you today?", false, "09:01 AM")
+    )
+
+    val sampleTasks = listOf(
+        TaskEntity("1", "Finalize Q3 Budget Proposal", "Finance", "HIGH", "2026-08-06", false, System.currentTimeMillis())
+    )
+
+    val sampleFacts = listOf(
+        FactEntity("1", "Office Wi-Fi Credentials", "Tech", "Key: QuantumSecret2026!", System.currentTimeMillis())
+    )
+
+    JAXAssistantTheme {
+        MainScreen(
+            messages = sampleMessages,
+            tasks = sampleTasks,
+            facts = sampleFacts,
+            apiKey = "AIzaSyPreviewKeyMock123",
+            onSendMessage = {},
+            onToggleTask = {},
+            onAddTask = { _, _, _, _ -> },
+            onSearchFacts = {},
+            onAddFact = { _, _, _ -> },
+            onUpdateApiKey = {},
+            onMicClick = {},
+            onSpeakBriefing = {},
+            onStopSpeaking = {}
+        )
+    }
+}
+
