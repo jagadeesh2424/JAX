@@ -360,6 +360,28 @@ Return structured JSON according to schema:
     }
   });
 
+  // AI Endpoint: agent step — returns the model's next JSON action for the tool loop (web agent).
+  app.post('/api/agent-step', async (req, res) => {
+    try {
+      const { prompt } = req.body;
+      if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
+        return res.status(400).json({ error: 'prompt is required.' });
+      }
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: 'You are J.A.X. (Jagadeesh Agent X), an executive AI agent. Respond with exactly one JSON object as instructed, nothing else.',
+          responseMimeType: 'application/json',
+        },
+      });
+      res.json({ text: response.text || '{}' });
+    } catch (error: any) {
+      console.error('Error in /api/agent-step:', error);
+      res.status(500).json({ error: error.message || 'agent-step failed' });
+    }
+  });
+
   // Vite Development or Static Production Serving
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

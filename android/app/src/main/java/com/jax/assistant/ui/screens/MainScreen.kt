@@ -53,8 +53,12 @@ fun MainScreen(
     onSendMessage: (String) -> Unit,
     onToggleTask: (TaskEntity) -> Unit,
     onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit,
+    onEditTask: (TaskEntity) -> Unit = {},
+    onDeleteTask: (TaskEntity) -> Unit = {},
     onSearchFacts: (String) -> Unit,
     onAddFact: (title: String, category: String, details: String) -> Unit,
+    onEditFact: (FactEntity) -> Unit = {},
+    onDeleteFact: (FactEntity) -> Unit = {},
     onUpdateApiKey: (String) -> Unit,
     onUpdateSelectedModel: (String) -> Unit = {},
     onToggleDeveloperMode: (Boolean) -> Unit = {},
@@ -101,7 +105,8 @@ fun MainScreen(
     onToggleConversationMode: () -> Unit = {},
     onMicClick: () -> Unit,
     onSpeakBriefing: (String) -> Unit,
-    onStopSpeaking: () -> Unit
+    onStopSpeaking: () -> Unit,
+    onRunBriefingNow: () -> Unit = {}
 ) {
     var activeTab by remember { mutableStateOf(initialTab) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings, 6: Notes, 7: Executive Dashboard
     var showDevConsole by remember { mutableStateOf(false) }
@@ -243,7 +248,13 @@ fun MainScreen(
                     conversationMode = conversationMode,
                     onToggleConversationMode = onToggleConversationMode
                 )
-                1 -> TaskDashboardScreen(tasks = tasks, onToggleTask = onToggleTask, onAddTask = onAddTask)
+                1 -> TaskDashboardScreen(
+                    tasks = tasks,
+                    onToggleTask = onToggleTask,
+                    onAddTask = onAddTask,
+                    onEditTask = onEditTask,
+                    onDeleteTask = onDeleteTask
+                )
                 2 -> CalendarScreen(
                     tasks = tasks,
                     onToggleTask = onToggleTask,
@@ -251,7 +262,13 @@ fun MainScreen(
                         onAddTask(title, category, priority, deadline)
                     }
                 )
-                3 -> MemoryVaultScreen(facts = facts, onSearch = onSearchFacts, onAddFact = onAddFact)
+                3 -> MemoryVaultScreen(
+                    facts = facts,
+                    onSearch = onSearchFacts,
+                    onAddFact = onAddFact,
+                    onEditFact = onEditFact,
+                    onDeleteFact = onDeleteFact
+                )
                 6 -> KnowledgeWorkspaceScreen(
                     pages = pages,
                     selectedPageId = selectedPageId,
@@ -273,7 +290,13 @@ fun MainScreen(
                     onLinkPage = onLinkPage,
                     onUnlinkPage = onUnlinkPage
                 )
-                4 -> DailyBriefingScreen(tasks = tasks, facts = facts, onSpeakBriefing = onSpeakBriefing, onStopSpeaking = onStopSpeaking)
+                4 -> DailyBriefingScreen(
+                    tasks = tasks,
+                    facts = facts,
+                    onSpeakBriefing = onSpeakBriefing,
+                    onStopSpeaking = onStopSpeaking,
+                    onRunBriefingNow = onRunBriefingNow
+                )
                 7 -> ExecutiveDashboardScreen(
                     tasks = tasks,
                     goals = goals,

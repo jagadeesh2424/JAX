@@ -125,11 +125,23 @@ class MainActivity : ComponentActivity() {
                     onAddTask = { title, category, priority, deadline ->
                         viewModel.addManualTask(title, category, priority, deadline)
                     },
+                    onEditTask = { task ->
+                        viewModel.updateTask(task)
+                    },
+                    onDeleteTask = { task ->
+                        viewModel.deleteTask(task)
+                    },
                     onSearchFacts = { query ->
                         viewModel.searchFacts(query)
                     },
                     onAddFact = { title, category, details ->
                         viewModel.addManualFact(title, category, details)
+                    },
+                    onEditFact = { fact ->
+                        viewModel.updateFact(fact)
+                    },
+                    onDeleteFact = { fact ->
+                        viewModel.deleteFact(fact)
                     },
                     onUpdateApiKey = { newKey ->
                         viewModel.updateApiKey(newKey)
@@ -197,6 +209,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onStopSpeaking = {
                         voiceManager.stopSpeaking()
+                    },
+                    onRunBriefingNow = {
+                        runBriefingNow()
                     }
                 )
             }
@@ -249,6 +264,13 @@ class MainActivity : ComponentActivity() {
             ExistingPeriodicWorkPolicy.UPDATE,
             dailyWorkRequest
         )
+    }
+
+    // Enqueues the daily briefing worker immediately so the 9 AM notification can be tested on demand.
+    private fun runBriefingNow() {
+        val request = OneTimeWorkRequestBuilder<DailyAgentWorker>().build()
+        WorkManager.getInstance(this).enqueue(request)
+        Toast.makeText(this, "Running briefing now \u2014 check your notifications.", Toast.LENGTH_SHORT).show()
     }
 
     // Milliseconds from now until the next daily briefing time.

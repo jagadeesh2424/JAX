@@ -28,7 +28,8 @@ fun DailyBriefingScreen(
     tasks: List<TaskEntity>,
     facts: List<FactEntity>,
     onSpeakBriefing: (String) -> Unit,
-    onStopSpeaking: () -> Unit
+    onStopSpeaking: () -> Unit,
+    onRunBriefingNow: () -> Unit = {}
 ) {
     val pendingTasks = remember(tasks) { tasks.filter { !it.isCompleted } }
     val highPriorityCount = remember(pendingTasks) { pendingTasks.count { it.priority.lowercase() == "high" } }
@@ -125,6 +126,22 @@ fun DailyBriefingScreen(
                     }
                 }
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = onRunBriefingNow,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanAccent),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "Test 9 AM Briefing Notification Now",
+                color = CyanAccent,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp
+            )
         }
 
         Spacer(modifier = Modifier.height(20.dp))

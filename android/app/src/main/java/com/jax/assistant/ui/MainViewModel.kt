@@ -168,26 +168,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                val result = repository.processUserInput(input, _facts.value, conversationSummary)
-                when (result) {
-                    is JaxParseResult.TaskResult -> {
-                        repository.insertTask(result.task)
-                        val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), result.reply, false, "Now")
-                        _messages.value = _messages.value + aiMsg
-                        onSpeak?.invoke(result.reply)
-                    }
-                    is JaxParseResult.FactResult -> {
-                        repository.insertFact(result.fact)
-                        val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), result.reply, false, "Now")
-                        _messages.value = _messages.value + aiMsg
-                        onSpeak?.invoke(result.reply)
-                    }
-                    is JaxParseResult.QuestionResult -> {
-                        val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), result.reply, false, "Now")
-                        _messages.value = _messages.value + aiMsg
-                        onSpeak?.invoke(result.reply)
-                    }
-                }
+                val reply = repository.runAgent(input, _facts.value, conversationSummary)
+                val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), reply, false, "Now")
+                _messages.value = _messages.value + aiMsg
+                onSpeak?.invoke(reply)
             } catch (e: Exception) {
                 val errorMsg = "System Error: ${e.localizedMessage ?: "Failed to process message"}"
                 val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), errorMsg, false, "Now")
@@ -204,6 +188,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateTask(task: TaskEntity) {
+        viewModelScope.launch {
+            repository.updateTask(task)
+        }
+    }
+
+    fun deleteTask(task: TaskEntity) {
+        viewModelScope.launch {
+            repository.deleteTask(task)
+        }
+    }
+
     fun addManualTask(title: String, category: String, priority: String, deadline: String?) {
         viewModelScope.launch {
             repository.createManualTask(title, category, priority, deadline)
@@ -213,6 +209,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addManualFact(title: String, category: String, details: String) {
         viewModelScope.launch {
             repository.createManualFact(title, category, details)
+        }
+    }
+
+    fun updateFact(fact: FactEntity) {
+        viewModelScope.launch {
+            repository.updateFact(fact)
+        }
+    }
+
+    fun deleteFact(fact: FactEntity) {
+        viewModelScope.launch {
+            repository.deleteFact(fact)
         }
     }
 

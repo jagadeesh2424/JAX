@@ -10,6 +10,8 @@ class TaskRepository(private val taskDao: TaskDao) {
 
     fun getAllTasks(): Flow<List<TaskEntity>> = taskDao.getAllTasks()
 
+    suspend fun getAllTasksSnapshot(): List<TaskEntity> = taskDao.getAllTasksList()
+
     suspend fun getOpenHighPriorityTasks(): List<TaskEntity> = taskDao.getOpenHighPriorityTasks()
 
     suspend fun insertTask(task: TaskEntity) = taskDao.insertTask(task)

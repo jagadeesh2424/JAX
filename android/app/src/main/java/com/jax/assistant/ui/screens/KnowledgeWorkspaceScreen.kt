@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -18,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -423,7 +426,8 @@ private fun BlockEditor(
                         onUpdateContent = { onUpdateBlockContent(block, it) },
                         onToggleChecked = { onToggleBlockChecked(block) },
                         onChangeType = { onChangeBlockType(block, it) },
-                        onDelete = { onDeleteBlock(block) }
+                        onDelete = { onDeleteBlock(block) },
+                        onEnter = { onAddBlock(block.type) }
                     )
                 }
             }
@@ -604,7 +608,8 @@ private fun BlockRow(
     onUpdateContent: (String) -> Unit,
     onToggleChecked: () -> Unit,
     onChangeType: (String) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onEnter: () -> Unit = {}
 ) {
     // A divider block is purely visual: render a rule with just a delete affordance.
     if (block.type == BlockType.DIVIDER) {
@@ -670,12 +675,20 @@ private fun BlockRow(
             Modifier.weight(1f)
         }
 
+        // Bullet/checklist rows behave like list items: Enter creates the next item.
+        val isListItem = block.type == BlockType.BULLET || block.type == BlockType.CHECKLIST
+
         TextField(
             value = text,
             onValueChange = {
                 text = it
                 onUpdateContent(it)
             },
+            singleLine = isListItem,
+            keyboardOptions = if (isListItem) KeyboardOptions(imeAction = ImeAction.Next) else KeyboardOptions.Default,
+            keyboardActions = if (isListItem) KeyboardActions(onNext = {
+                if (text.isBlank()) onChangeType(BlockType.TEXT) else onEnter()
+            }) else KeyboardActions.Default,
             placeholder = { Text(placeholder, color = Color.Gray, fontSize = fontSize) },
             textStyle = LocalTextStyle.current.copy(
                 color = if (block.type == BlockType.QUOTE) Color(0xFFBBBBBB) else Color.White,

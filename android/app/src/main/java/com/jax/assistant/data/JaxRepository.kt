@@ -2,7 +2,25 @@ package com.jax.assistant.data
 
 import android.content.Context
 import com.jax.assistant.ai.JaxParseResult
+import com.jax.assistant.ai.MemoryEngine
 import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.agent.AgentController
+import com.jax.assistant.ai.agent.AgentOrchestrator
+import com.jax.assistant.ai.agent.ContextAssembler
+import com.jax.assistant.ai.agent.InMemoryEventSink
+import com.jax.assistant.ai.agent.ToolRegistry
+import com.jax.assistant.ai.agent.tools.CompleteTaskTool
+import com.jax.assistant.ai.agent.tools.CreateTaskTool
+import com.jax.assistant.ai.agent.tools.DialTool
+import com.jax.assistant.ai.agent.tools.NavigateTool
+import com.jax.assistant.ai.agent.tools.OpenAppTool
+import com.jax.assistant.ai.agent.tools.SearchMemoryTool
+import com.jax.assistant.ai.agent.tools.SearchTasksTool
+import com.jax.assistant.ai.agent.tools.SetAlarmTool
+import com.jax.assistant.ai.agent.tools.SetTimerTool
+import com.jax.assistant.ai.agent.tools.StoreMemoryTool
+import com.jax.assistant.ai.agent.tools.WebSearchTool
+import com.jax.assistant.device.DeviceController
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.db.FactEntity
@@ -24,6 +42,33 @@ class JaxRepository(context: Context) {
     private val projectRepo = locator.projects
     private val habitRepo = locator.habits
     private val aiRepo = locator.ai
+    private val deviceController = DeviceController(context.applicationContext)
+
+    // Phase 1 agent: tool registry + controlled reasoning loop over the existing AI router.
+    private val agentEvents = InMemoryEventSink()
+    private val agent: AgentOrchestrator by lazy {
+        val registry = ToolRegistry(
+            listOf(
+                CreateTaskTool(taskRepo),
+                SearchTasksTool(taskRepo),
+                CompleteTaskTool(taskRepo),
+                StoreMemoryTool(memoryRepo),
+                SearchMemoryTool(memoryRepo),
+                SetAlarmTool(deviceController),
+                SetTimerTool(deviceController),
+                OpenAppTool(deviceController),
+                WebSearchTool(deviceController),
+                NavigateTool(deviceController),
+                DialTool(deviceController)
+            )
+        )
+        AgentOrchestrator(
+            registry = registry,
+            controller = AgentController(),
+            eventSink = agentEvents,
+            generate = { prompt, model -> aiRepo.generate(prompt, model) }
+        )
+    }
 
     fun getApiKey(): String = prefs.getApiKey()
 
@@ -66,6 +111,8 @@ class JaxRepository(context: Context) {
 
     suspend fun insertFact(fact: FactEntity) = memoryRepo.insertFact(fact)
 
+    suspend fun updateFact(fact: FactEntity) = memoryRepo.updateFact(fact)
+
     suspend fun createManualFact(title: String, category: String, details: String): FactEntity =
         memoryRepo.createManualFact(title, category, details)
 
@@ -79,6 +126,24 @@ class JaxRepository(context: Context) {
         conversationSummary: String = ""
     ): JaxParseResult =
         aiRepo.processUserInput(input, getSelectedModel(), factsList, conversationSummary)
+
+    // Phase 1: run the tool-using agent loop for a chat turn. Tools persist their own
+    // changes; returns J.A.X.'s final reply.
+    suspend fun runAgent(
+        input: String,
+        facts: List<FactEntity> = emptyList(),
+        conversationSummary: String = ""
+    ): String {
+        val openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
+        val relevant = MemoryEngine().selectRelevantMemories(input, facts)
+        val context = ContextAssembler().build(
+            relevantFacts = relevant,
+            openTasks = openTasks,
+            conversationSummary = conversationSummary,
+            currentDate = java.time.LocalDate.now().toString()
+        )
+        return agent.run(input, getSelectedModel(), context.text).reply
+    }
 
     // ---- Executive Intelligence (Phase 2) ----
 

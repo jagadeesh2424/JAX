@@ -8,6 +8,7 @@ import java.util.UUID
 sealed class JaxParseResult {
     data class TaskResult(val task: TaskEntity, val reply: String) : JaxParseResult()
     data class FactResult(val fact: FactEntity, val reply: String) : JaxParseResult()
+    data class CompleteTaskResult(val reference: String, val reply: String) : JaxParseResult()
     data class QuestionResult(val reply: String) : JaxParseResult()
 }
 
@@ -84,6 +85,7 @@ class GeminiBrain(
                     )
                     JaxParseResult.FactResult(fact, reply)
                 }
+                "COMPLETE_TASK" -> JaxParseResult.CompleteTaskResult(reference = title, reply = reply)
                 else -> JaxParseResult.QuestionResult(reply)
             }
         } catch (e: Exception) {

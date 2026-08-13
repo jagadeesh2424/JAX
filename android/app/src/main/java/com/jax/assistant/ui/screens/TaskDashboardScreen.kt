@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,10 +30,14 @@ import com.jax.assistant.ui.theme.SurfaceDark
 fun TaskDashboardScreen(
     tasks: List<TaskEntity>,
     onToggleTask: (TaskEntity) -> Unit,
-    onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit
+    onAddTask: (title: String, category: String, priority: String, deadline: String?) -> Unit,
+    onEditTask: (TaskEntity) -> Unit = {},
+    onDeleteTask: (TaskEntity) -> Unit = {}
 ) {
     var selectedCategory by remember { mutableStateOf("All") }
     var showAddDialog by remember { mutableStateOf(false) }
+    var editingTask by remember { mutableStateOf<TaskEntity?>(null) }
+    var deletingTask by remember { mutableStateOf<TaskEntity?>(null) }
 
     val categories = listOf("All", "Work", "Personal", "Finance", "General")
 
@@ -165,6 +171,13 @@ fun TaskDashboardScreen(
                                     }
                                 }
                             }
+
+                            IconButton(onClick = { editingTask = task }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit Task", tint = CyanAccent)
+                            }
+                            IconButton(onClick = { deletingTask = task }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete Task", tint = Color.Red)
+                            }
                         }
                     }
                 }
@@ -177,6 +190,42 @@ fun TaskDashboardScreen(
                 onConfirm = { title, cat, priority, deadline ->
                     onAddTask(title, cat, priority, deadline)
                     showAddDialog = false
+                }
+            )
+        }
+
+        editingTask?.let { task ->
+            EditTaskDialog(
+                task = task,
+                onDismiss = { editingTask = null },
+                onConfirm = { updated ->
+                    onEditTask(updated)
+                    editingTask = null
+                }
+            )
+        }
+
+        deletingTask?.let { task ->
+            AlertDialog(
+                onDismissRequest = { deletingTask = null },
+                containerColor = SurfaceDark,
+                title = { Text("Delete Task", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = { Text("Delete \"${task.title}\"? This cannot be undone.", color = Color.LightGray) },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onDeleteTask(task)
+                            deletingTask = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    ) {
+                        Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deletingTask = null }) {
+                        Text("Cancel", color = Color.Gray)
+                    }
                 }
             )
         }
@@ -270,6 +319,111 @@ fun AddTaskDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)
             ) {
                 Text(text = "Save Task", color = PureDark, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "Cancel", color = Color.Gray)
+            }
+        }
+    )
+}
+
+@Composable
+fun EditTaskDialog(
+    task: TaskEntity,
+    onDismiss: () -> Unit,
+    onConfirm: (TaskEntity) -> Unit
+) {
+    var title by remember { mutableStateOf(task.title) }
+    var category by remember { mutableStateOf(task.category) }
+    var priority by remember { mutableStateOf(task.priority) }
+    var deadline by remember { mutableStateOf(task.deadline ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        title = {
+            Text(text = "Edit Task", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Task Title", color = Color.Gray) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CyanAccent,
+                        unfocusedBorderColor = Color.DarkGray,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = category,
+                    onValueChange = { category = it },
+                    label = { Text("Category (Work, Personal, Finance)", color = Color.Gray) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CyanAccent,
+                        unfocusedBorderColor = Color.DarkGray,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(text = "Priority Level", color = Color.LightGray, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("HIGH", "MED", "LOW").forEach { p ->
+                        val isSel = priority == p
+                        Button(
+                            onClick = { priority = p },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSel) CyanAccent else Color.DarkGray
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text(text = p, color = if (isSel) PureDark else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = deadline,
+                    onValueChange = { deadline = it },
+                    label = { Text("Deadline / Due Date (Optional)", color = Color.Gray) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CyanAccent,
+                        unfocusedBorderColor = Color.DarkGray,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (title.isNotBlank()) {
+                        onConfirm(
+                            task.copy(
+                                title = title.trim(),
+                                category = if (category.isBlank()) "General" else category.trim(),
+                                priority = if (priority.isBlank()) "MED" else priority,
+                                deadline = deadline.trim().ifBlank { null }
+                            )
+                        )
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)
+            ) {
+                Text(text = "Update Task", color = PureDark, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Mic, CheckCircle2, Clock, Tag, AlertCircle, Volume2, RefreshCw, Bot, User } from 'lucide-react';
 import { ChatMessage, Task, Priority } from '../types';
 import { RoomDB } from '../db/roomDatabase';
+import { runWebAgent } from '../lib/webAgent';
 import { formatFullDateTime } from '../utils/dateUtils';
 
 // Helper to wrap raw 24kHz 16-bit 1-channel PCM audio bytes into a WAV blob for browser playback
@@ -199,6 +200,18 @@ export const ChatCaptureScreen: React.FC<ChatCaptureScreenProps> = ({ onTaskSave
     setIsLoading(true);
 
     try {
+      // Web agent path (parity with Android): the loop calls tools that persist to RoomDB.
+      const reply = await runWebAgent(userMessageText);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === streamingAiId ? { ...m, text: reply, isComplete: true, isSaved: true } : m
+        )
+      );
+      setPendingDraft(null);
+      speakJaxText(reply);
+      onTaskSaved();
+      return;
+
       const response = await fetch('/api/parse-task-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

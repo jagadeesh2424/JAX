@@ -33,6 +33,8 @@ class AiRepository(context: Context, initialApiKey: String) {
     suspend fun testConnection(modelName: String): TestConnectionResult =
         aiService.testConnection(modelName)
 
+    suspend fun generate(prompt: String, model: String): String = aiService.generate(prompt, model)
+
     suspend fun processUserInput(
         input: String,
         selectedModel: String,

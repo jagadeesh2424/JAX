@@ -12,7 +12,11 @@ class MemoryRepository(private val factDao: FactDao) {
 
     fun searchFacts(query: String): Flow<List<FactEntity>> = factDao.searchFacts(query)
 
+    suspend fun searchFactsSnapshot(query: String): List<FactEntity> = factDao.searchFactsList(query)
+
     suspend fun insertFact(fact: FactEntity) = factDao.insertFact(fact)
+
+    suspend fun updateFact(fact: FactEntity) = factDao.insertFact(fact)
 
     suspend fun deleteFact(fact: FactEntity) = factDao.deleteFact(fact)
 
