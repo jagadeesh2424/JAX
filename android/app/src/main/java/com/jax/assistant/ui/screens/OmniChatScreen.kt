@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Send
@@ -49,7 +50,8 @@ fun OmniChatScreen(
     onMicClick: () -> Unit,
     isListening: Boolean = false,
     conversationMode: Boolean = false,
-    onToggleConversationMode: () -> Unit = {}
+    onToggleConversationMode: () -> Unit = {},
+    onNewChat: () -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf("") }
 
@@ -67,6 +69,18 @@ fun OmniChatScreen(
             .fillMaxSize()
             .background(PureDark)
     ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onNewChat) {
+                Icon(Icons.Default.Add, contentDescription = "New Chat", tint = CyanAccent, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("New Chat", color = CyanAccent, fontSize = 12.sp)
+            }
+        }
         // Chat Messages List
         LazyColumn(
             modifier = Modifier

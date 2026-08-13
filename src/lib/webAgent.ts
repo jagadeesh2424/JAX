@@ -43,20 +43,21 @@ const tools: WebTool[] = [
   },
   {
     name: 'search_tasks',
-    description: 'List open tasks, optionally filtered by a keyword. Use to get a task id before completing it.',
+    description: 'List tasks (open and completed), optionally filtered by a keyword. Each result has a completed flag. Use to get a task id before completing or deleting it.',
     params: 'query (optional)',
     run: async (a) => {
       const q = String(a.query || '').trim().toLowerCase();
-      const open = (await RoomDB.getAllTasks()).filter((t) => t.status !== 'completed');
-      const matched = q ? open.filter((t) => t.title.toLowerCase().includes(q)) : open;
-      if (!matched.length) return { success: true, message: 'No matching open tasks.' };
+      const all = await RoomDB.getAllTasks();
+      const matched = q ? all.filter((t) => t.title.toLowerCase().includes(q)) : all;
+      if (!matched.length) return { success: true, message: 'No matching tasks.' };
       const data = matched.slice(0, 20).map((t) => ({
         id: t.id,
         title: t.title,
         priority: t.priority,
         deadline: t.deadline || '',
+        completed: t.status === 'completed',
       }));
-      return { success: true, message: `Found ${matched.length} open task(s).`, data: { tasks: data } };
+      return { success: true, message: `Found ${matched.length} task(s).`, data: { tasks: data } };
     },
   },
   {

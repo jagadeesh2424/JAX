@@ -36,7 +36,7 @@ class CreateTaskTool(private val tasks: TaskRepository) : JaxTool {
 class SearchTasksTool(private val tasks: TaskRepository) : JaxTool {
     override val name = "search_tasks"
     override val description =
-        "List the user's open tasks, optionally filtered by a keyword. Use this to get a task id before completing it."
+        "List the user's tasks (open and completed), optionally filtered by a keyword. Each result has a 'completed' flag. Use this to get a task id before completing or deleting it."
     override val parameters = listOf(
         ToolParam("query", "string", "Optional keyword to filter task titles")
     )
@@ -44,9 +44,9 @@ class SearchTasksTool(private val tasks: TaskRepository) : JaxTool {
 
     override suspend fun execute(args: JSONObject): ToolResult {
         val query = args.optString("query", "").trim().lowercase()
-        val open = tasks.getAllTasksSnapshot().filter { !it.isCompleted }
-        val matched = if (query.isBlank()) open else open.filter { it.title.lowercase().contains(query) }
-        if (matched.isEmpty()) return ToolResult.ok("No matching open tasks.")
+        val all = tasks.getAllTasksSnapshot()
+        val matched = if (query.isBlank()) all else all.filter { it.title.lowercase().contains(query) }
+        if (matched.isEmpty()) return ToolResult.ok("No matching tasks.")
         val arr = JSONArray()
         matched.take(20).forEach {
             arr.put(
@@ -55,9 +55,10 @@ class SearchTasksTool(private val tasks: TaskRepository) : JaxTool {
                     .put("title", it.title)
                     .put("priority", it.priority)
                     .put("deadline", it.deadline ?: "")
+                    .put("completed", it.isCompleted)
             )
         }
-        return ToolResult.ok("Found ${matched.size} open task(s).", JSONObject().put("tasks", arr))
+        return ToolResult.ok("Found ${matched.size} task(s).", JSONObject().put("tasks", arr))
     }
 }
 

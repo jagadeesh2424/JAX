@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 val isPlanning by viewModel.isPlanning.collectAsState()
                 val isListening by viewModel.isListening.collectAsState()
                 val conversationMode by viewModel.conversationMode.collectAsState()
+                val focusBlockId by viewModel.focusBlockId.collectAsState()
 
                 // Deep-link: the 9 AM briefing notification opens straight to the Briefing tab;
                 // the weekly review notification opens the Executive Dashboard.
@@ -170,7 +171,9 @@ class MainActivity : ComponentActivity() {
                     onRenamePage = { page, newTitle -> viewModel.renamePage(page, newTitle) },
                     onUpdatePageTags = { page, tags -> viewModel.updatePageTags(page, tags) },
                     onDeletePage = { viewModel.deletePage(it) },
-                    onAddBlock = { viewModel.addBlock(it) },
+                    onAddBlock = { type, afterId -> viewModel.addBlock(type, afterId) },
+                    focusBlockId = focusBlockId,
+                    onFocusHandled = { viewModel.consumeFocusBlock() },
                     onUpdateBlockContent = { block, content -> viewModel.updateBlockContent(block, content) },
                     onToggleBlockChecked = { viewModel.toggleBlockChecked(it) },
                     onChangeBlockType = { block, type -> viewModel.changeBlockType(block, type) },
@@ -203,6 +206,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onMicClick = {
                         handleMicClick()
+                    },
+                    onNewChat = {
+                        viewModel.startNewChat()
                     },
                     onSpeakBriefing = { text ->
                         voiceManager.speak(text)

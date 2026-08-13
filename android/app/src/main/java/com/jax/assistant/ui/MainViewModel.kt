@@ -10,6 +10,8 @@ import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.config.AppConfig
 import com.jax.assistant.data.JaxRepository
 import com.jax.assistant.data.ServiceLocator
+import com.jax.assistant.db.BlockType
+import com.jax.assistant.db.ChatMessageEntity
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.GoalEntity
 import com.jax.assistant.db.HabitEntity
@@ -103,6 +105,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isPlanning: StateFlow<Boolean> = _isPlanning.asStateFlow()
 
     init {
+        // Load persisted chat history (Phase 2 durable state).
+        viewModelScope.launch {
+            val history = repository.getChatHistory()
+            if (history.isNotEmpty()) {
+                _messages.value = history.map {
+                    ComposeChatMessage(it.id, it.text, it.isUser, formatTime(it.timestamp))
+                }
+            }
+        }
         // Observe Tasks
         viewModelScope.launch {
             repository.getAllTasks().collectLatest { list ->
@@ -150,10 +161,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Records a user command + JAX confirmation in the chat without invoking the AI (used for device actions).
     fun logAssistantAction(userText: String, replyText: String) {
         val now = System.currentTimeMillis()
-        val userMsg = ComposeChatMessage(now.toString(), userText, true, "Now")
-        val jaxMsg = ComposeChatMessage((now + 1).toString(), replyText, false, "Now")
-        _messages.value = _messages.value + userMsg + jaxMsg
+        pushMessage(ComposeChatMessage(now.toString(), userText, true, "Now"))
+        pushMessage(ComposeChatMessage((now + 1).toString(), replyText, false, "Now"))
     }
+
+    // Appends a chat message to the UI and persists it to Room.
+    private fun pushMessage(msg: ComposeChatMessage) {
+        _messages.value = _messages.value + msg
+        viewModelScope.launch {
+            repository.saveChatMessage(
+                ChatMessageEntity(
+                    id = msg.id,
+                    text = msg.text,
+                    isUser = msg.isUser,
+                    timestamp = msg.id.toLongOrNull() ?: System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    // Clears chat history and starts a fresh session.
+    fun startNewChat() {
+        viewModelScope.launch {
+            repository.clearChatHistory()
+            _messages.value = listOf(
+                ComposeChatMessage("1", "Good day, Jagadeesh. J.A.X. is active and synced to your Room database.", false, "Now")
+            )
+        }
+    }
+
+    private fun formatTime(ts: Long): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ts))
 
     fun sendMessage(input: String, onSpeak: ((String) -> Unit)? = null) {
         if (input.isBlank()) return
@@ -163,19 +201,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val userMsg = ComposeChatMessage(System.currentTimeMillis().toString(), input, true, "Now")
-        _messages.value = _messages.value + userMsg
+        pushMessage(userMsg)
         _isProcessing.value = true
 
         viewModelScope.launch {
             try {
                 val reply = repository.runAgent(input, _facts.value, conversationSummary)
-                val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), reply, false, "Now")
-                _messages.value = _messages.value + aiMsg
+                pushMessage(ComposeChatMessage(System.currentTimeMillis().toString(), reply, false, "Now"))
                 onSpeak?.invoke(reply)
             } catch (e: Exception) {
                 val errorMsg = "System Error: ${e.localizedMessage ?: "Failed to process message"}"
-                val aiMsg = ComposeChatMessage(System.currentTimeMillis().toString(), errorMsg, false, "Now")
-                _messages.value = _messages.value + aiMsg
+                pushMessage(ComposeChatMessage(System.currentTimeMillis().toString(), errorMsg, false, "Now"))
             } finally {
                 _isProcessing.value = false
             }
@@ -273,6 +309,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---- Notion-style Notes ----
 
+    // Which block the notes editor should move the cursor to (auto-focus), or null.
+    private val _focusBlockId = MutableStateFlow<String?>(null)
+    val focusBlockId: StateFlow<String?> = _focusBlockId.asStateFlow()
+
+    fun consumeFocusBlock() { _focusBlockId.value = null }
+
     fun openPage(pageId: String) {
         _selectedPageId.value = pageId
         blocksJob?.cancel()
@@ -285,6 +327,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         relatedJob = viewModelScope.launch {
             notesRepository.getRelatedPages(pageId).collectLatest { list ->
                 _relatedPages.value = list
+            }
+        }
+        // Ensure a writable default text block and drop the cursor into it on a fresh page.
+        viewModelScope.launch {
+            val existing = notesRepository.getBlocksSnapshot(pageId)
+            when {
+                existing.isEmpty() ->
+                    _focusBlockId.value = notesRepository.addBlockAfter(pageId, null, BlockType.TEXT).id
+                existing.size == 1 && existing[0].type == BlockType.TEXT && existing[0].content.isBlank() ->
+                    _focusBlockId.value = existing[0].id
             }
         }
     }
@@ -342,10 +394,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { notesRepository.unlinkPages(current, otherPageId) }
     }
 
-    fun addBlock(type: String) {
+    fun addBlock(type: String, afterBlockId: String?) {
         val pageId = _selectedPageId.value ?: return
-        val nextPosition = (_blocks.value.maxOfOrNull { it.position } ?: -1) + 1
-        viewModelScope.launch { notesRepository.addBlock(pageId, type, nextPosition) }
+        viewModelScope.launch {
+            val block = notesRepository.addBlockAfter(pageId, afterBlockId, type)
+            _focusBlockId.value = block.id
+        }
     }
 
     fun updateBlockContent(block: NoteBlockEntity, content: String) {

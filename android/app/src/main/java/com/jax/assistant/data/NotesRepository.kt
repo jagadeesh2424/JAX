@@ -82,6 +82,29 @@ class NotesRepository(private val db: AppDatabase) {
         return block
     }
 
+    suspend fun getBlocksSnapshot(pageId: String): List<NoteBlockEntity> =
+        noteDao.getBlocksForPageList(pageId)
+
+    // Inserts a new block right after [afterBlockId] (or at the end when null), shifting
+    // later blocks down so the new block lands at the cursor position.
+    suspend fun addBlockAfter(pageId: String, afterBlockId: String?, type: String): NoteBlockEntity {
+        val existing = noteDao.getBlocksForPageList(pageId)
+        val anchor = afterBlockId?.let { id -> existing.firstOrNull { it.id == id } }
+        val insertPos = if (anchor != null) anchor.position + 1 else (existing.maxOfOrNull { it.position } ?: -1) + 1
+        existing.filter { it.position >= insertPos }.forEach {
+            noteDao.updateBlock(it.copy(position = it.position + 1))
+        }
+        val block = NoteBlockEntity(
+            id = UUID.randomUUID().toString(),
+            pageId = pageId,
+            type = type,
+            position = insertPos
+        )
+        noteDao.insertBlock(block)
+        touchPage(pageId)
+        return block
+    }
+
     suspend fun updateBlock(block: NoteBlockEntity) {
         noteDao.updateBlock(block)
         touchPage(block.pageId)

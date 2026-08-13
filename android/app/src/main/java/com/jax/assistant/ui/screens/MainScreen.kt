@@ -76,7 +76,9 @@ fun MainScreen(
     onRenamePage: (NotePageEntity, String) -> Unit = { _, _ -> },
     onUpdatePageTags: (NotePageEntity, String) -> Unit = { _, _ -> },
     onDeletePage: (NotePageEntity) -> Unit = {},
-    onAddBlock: (type: String) -> Unit = {},
+    onAddBlock: (type: String, afterBlockId: String?) -> Unit = { _, _ -> },
+    focusBlockId: String? = null,
+    onFocusHandled: () -> Unit = {},
     onUpdateBlockContent: (NoteBlockEntity, String) -> Unit = { _, _ -> },
     onToggleBlockChecked: (NoteBlockEntity) -> Unit = {},
     onChangeBlockType: (NoteBlockEntity, String) -> Unit = { _, _ -> },
@@ -103,6 +105,7 @@ fun MainScreen(
     isListening: Boolean = false,
     conversationMode: Boolean = false,
     onToggleConversationMode: () -> Unit = {},
+    onNewChat: () -> Unit = {},
     onMicClick: () -> Unit,
     onSpeakBriefing: (String) -> Unit,
     onStopSpeaking: () -> Unit,
@@ -246,7 +249,8 @@ fun MainScreen(
                     onMicClick = onMicClick,
                     isListening = isListening,
                     conversationMode = conversationMode,
-                    onToggleConversationMode = onToggleConversationMode
+                    onToggleConversationMode = onToggleConversationMode,
+                    onNewChat = onNewChat
                 )
                 1 -> TaskDashboardScreen(
                     tasks = tasks,
@@ -288,7 +292,9 @@ fun MainScreen(
                     onChangeBlockType = onChangeBlockType,
                     onDeleteBlock = onDeleteBlock,
                     onLinkPage = onLinkPage,
-                    onUnlinkPage = onUnlinkPage
+                    onUnlinkPage = onUnlinkPage,
+                    focusBlockId = focusBlockId,
+                    onFocusHandled = onFocusHandled
                 )
                 4 -> DailyBriefingScreen(
                     tasks = tasks,

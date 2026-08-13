@@ -35,6 +35,9 @@ interface NoteDao {
     @Query("SELECT * FROM note_blocks WHERE pageId = :pageId ORDER BY position ASC")
     fun getBlocksForPage(pageId: String): Flow<List<NoteBlockEntity>>
 
+    @Query("SELECT * FROM note_blocks WHERE pageId = :pageId ORDER BY position ASC")
+    suspend fun getBlocksForPageList(pageId: String): List<NoteBlockEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBlock(block: NoteBlockEntity)
 

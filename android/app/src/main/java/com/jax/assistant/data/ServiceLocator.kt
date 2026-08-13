@@ -24,5 +24,7 @@ object ServiceLocator {
     val goals: GoalRepository by lazy { GoalRepository(database.goalDao()) }
     val projects: ProjectRepository by lazy { ProjectRepository(database.projectDao()) }
     val habits: HabitRepository by lazy { HabitRepository(database.habitDao()) }
+    val chat: ChatRepository by lazy { ChatRepository(database.chatMessageDao()) }
+    val agentRuns: AgentRunRepository by lazy { AgentRunRepository(database.agentRunDao()) }
     val ai: AiRepository by lazy { AiRepository(appContext, userPreferences.getApiKey()) }
 }

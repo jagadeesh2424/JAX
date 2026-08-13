@@ -23,6 +23,7 @@ import com.jax.assistant.ai.agent.tools.WebSearchTool
 import com.jax.assistant.device.DeviceController
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.db.ChatMessageEntity
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.GoalEntity
 import com.jax.assistant.db.HabitEntity
@@ -43,9 +44,10 @@ class JaxRepository(context: Context) {
     private val habitRepo = locator.habits
     private val aiRepo = locator.ai
     private val deviceController = DeviceController(context.applicationContext)
+    private val chatRepo = locator.chat
+    private val agentRunRepo = locator.agentRuns
 
     // Phase 1 agent: tool registry + controlled reasoning loop over the existing AI router.
-    private val agentEvents = InMemoryEventSink()
     private val agent: AgentOrchestrator by lazy {
         val registry = ToolRegistry(
             listOf(
@@ -65,7 +67,6 @@ class JaxRepository(context: Context) {
         AgentOrchestrator(
             registry = registry,
             controller = AgentController(),
-            eventSink = agentEvents,
             generate = { prompt, model -> aiRepo.generate(prompt, model) }
         )
     }
@@ -142,8 +143,22 @@ class JaxRepository(context: Context) {
             conversationSummary = conversationSummary,
             currentDate = java.time.LocalDate.now().toString()
         )
-        return agent.run(input, getSelectedModel(), context.text).reply
+        // Durable run: capture this turn's events and persist the run + events to Room.
+        val runId = java.util.UUID.randomUUID().toString()
+        val startedAt = System.currentTimeMillis()
+        val sink = InMemoryEventSink()
+        val result = agent.run(input, getSelectedModel(), context.text, sink)
+        val events = sink.snapshot()
+        val status = if (events.any { it.type == "error" }) "COMPLETED_WITH_ERRORS" else "COMPLETED"
+        agentRunRepo.saveRun(runId, input, status, result.reply, result.toolsUsed, startedAt, System.currentTimeMillis(), events)
+        return result.reply
     }
+
+    suspend fun getChatHistory(): List<ChatMessageEntity> = chatRepo.getHistory()
+
+    suspend fun saveChatMessage(message: ChatMessageEntity) = chatRepo.save(message)
+
+    suspend fun clearChatHistory() = chatRepo.clear()
 
     // ---- Executive Intelligence (Phase 2) ----
 

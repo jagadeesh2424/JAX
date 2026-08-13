@@ -10,13 +10,12 @@ data class AgentResult(val reply: String, val toolsUsed: List<String>)
 class AgentOrchestrator(
     private val registry: ToolRegistry,
     private val controller: AgentController,
-    private val eventSink: AgentEventSink,
     private val generate: suspend (prompt: String, model: String) -> String,
     private val maxSteps: Int = 6
 ) {
 
-    suspend fun run(userInput: String, model: String, contextText: String): AgentResult {
-        eventSink.emit(AgentEvent("user_input", userInput))
+    suspend fun run(userInput: String, model: String, contextText: String, sink: AgentEventSink): AgentResult {
+        sink.emit(AgentEvent("user_input", userInput))
         val toolsUsed = mutableListOf<String>()
         val transcript = StringBuilder()
 
@@ -26,7 +25,7 @@ class AgentOrchestrator(
             val raw = try {
                 generate(prompt, model)
             } catch (e: Exception) {
-                eventSink.emit(AgentEvent("error", e.message ?: "generate failed"))
+                sink.emit(AgentEvent("error", e.message ?: "generate failed"))
                 return AgentResult("J.A.X. Notice: ${e.message ?: "AI request failed."}", toolsUsed)
             }
 
@@ -39,10 +38,10 @@ class AgentOrchestrator(
                     val tool = registry.get(toolName)
                     if (tool == null) {
                         transcript.append("\nTOOL $toolName -> FAILURE: unknown tool")
-                        eventSink.emit(AgentEvent("error", "unknown tool $toolName"))
+                        sink.emit(AgentEvent("error", "unknown tool $toolName"))
                         return@repeat
                     }
-                    eventSink.emit(AgentEvent("tool_call", "$toolName $args"))
+                    sink.emit(AgentEvent("tool_call", "$toolName $args"))
 
                     if (controller.authorize(tool, args) != AgentController.Decision.ALLOW) {
                         transcript.append("\nTOOL $toolName -> FAILURE: not permitted")
@@ -63,11 +62,11 @@ class AgentOrchestrator(
                         "FAILURE: ${result.message}"
                     }
                     transcript.append("\nTOOL $toolName -> $obs")
-                    eventSink.emit(AgentEvent("tool_result", obs))
+                    sink.emit(AgentEvent("tool_result", obs))
                 }
                 else -> {
                     val reply = json.optString("reply").ifBlank { "Done, Jagadeesh." }
-                    eventSink.emit(AgentEvent("final", reply))
+                    sink.emit(AgentEvent("final", reply))
                     return AgentResult(reply, toolsUsed)
                 }
             }

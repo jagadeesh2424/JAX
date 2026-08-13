@@ -16,6 +16,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -48,13 +51,15 @@ fun KnowledgeWorkspaceScreen(
     onRenamePage: (NotePageEntity, String) -> Unit,
     onUpdatePageTags: (NotePageEntity, String) -> Unit = { _, _ -> },
     onDeletePage: (NotePageEntity) -> Unit,
-    onAddBlock: (type: String) -> Unit,
+    onAddBlock: (type: String, afterBlockId: String?) -> Unit,
     onUpdateBlockContent: (NoteBlockEntity, String) -> Unit,
     onToggleBlockChecked: (NoteBlockEntity) -> Unit,
     onChangeBlockType: (NoteBlockEntity, String) -> Unit,
     onDeleteBlock: (NoteBlockEntity) -> Unit,
     onLinkPage: (String) -> Unit = {},
-    onUnlinkPage: (String) -> Unit = {}
+    onUnlinkPage: (String) -> Unit = {},
+    focusBlockId: String? = null,
+    onFocusHandled: () -> Unit = {}
 ) {
     val openPage = remember(selectedPageId, pages) { pages.find { it.id == selectedPageId } }
     if (openPage != null) {
@@ -74,7 +79,9 @@ fun KnowledgeWorkspaceScreen(
             onChangeBlockType = onChangeBlockType,
             onDeleteBlock = onDeleteBlock,
             onLinkPage = onLinkPage,
-            onUnlinkPage = onUnlinkPage
+            onUnlinkPage = onUnlinkPage,
+            focusBlockId = focusBlockId,
+            onFocusHandled = onFocusHandled
         )
     } else {
         PageList(
@@ -320,17 +327,20 @@ private fun BlockEditor(
     onRenamePage: (NotePageEntity, String) -> Unit,
     onUpdatePageTags: (NotePageEntity, String) -> Unit,
     onDeletePage: (NotePageEntity) -> Unit,
-    onAddBlock: (type: String) -> Unit,
+    onAddBlock: (type: String, afterBlockId: String?) -> Unit,
     onUpdateBlockContent: (NoteBlockEntity, String) -> Unit,
     onToggleBlockChecked: (NoteBlockEntity) -> Unit,
     onChangeBlockType: (NoteBlockEntity, String) -> Unit,
     onDeleteBlock: (NoteBlockEntity) -> Unit,
     onLinkPage: (String) -> Unit,
-    onUnlinkPage: (String) -> Unit
+    onUnlinkPage: (String) -> Unit,
+    focusBlockId: String?,
+    onFocusHandled: () -> Unit
 ) {
     var titleText by remember(page.id) { mutableStateOf(page.title) }
     var tagsText by remember(page.id) { mutableStateOf(page.tags) }
     var showLinkPicker by remember(page.id) { mutableStateOf(false) }
+    var activeBlockId by remember(page.id) { mutableStateOf<String?>(null) }
 
     Box(
         modifier = Modifier
@@ -427,7 +437,10 @@ private fun BlockEditor(
                         onToggleChecked = { onToggleBlockChecked(block) },
                         onChangeType = { onChangeBlockType(block, it) },
                         onDelete = { onDeleteBlock(block) },
-                        onEnter = { onAddBlock(block.type) }
+                        onEnter = { onAddBlock(block.type, block.id) },
+                        onFocused = { activeBlockId = block.id },
+                        shouldFocus = block.id == focusBlockId,
+                        onFocusHandled = onFocusHandled
                     )
                 }
             }
@@ -441,13 +454,13 @@ private fun BlockEditor(
                     .padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                AddBlockChip("Text", Icons.Default.Notes) { onAddBlock(BlockType.TEXT) }
-                AddBlockChip("Heading", Icons.Default.Title) { onAddBlock(BlockType.HEADING) }
-                AddBlockChip("Bullet", Icons.Default.FormatListBulleted) { onAddBlock(BlockType.BULLET) }
-                AddBlockChip("To-do", Icons.Default.CheckBox) { onAddBlock(BlockType.CHECKLIST) }
-                AddBlockChip("Code", Icons.Default.Code) { onAddBlock(BlockType.CODE) }
-                AddBlockChip("Quote", Icons.Default.FormatQuote) { onAddBlock(BlockType.QUOTE) }
-                AddBlockChip("Divider", Icons.Default.HorizontalRule) { onAddBlock(BlockType.DIVIDER) }
+                AddBlockChip("Text", Icons.Default.Notes) { onAddBlock(BlockType.TEXT, activeBlockId) }
+                AddBlockChip("Heading", Icons.Default.Title) { onAddBlock(BlockType.HEADING, activeBlockId) }
+                AddBlockChip("Bullet", Icons.Default.FormatListBulleted) { onAddBlock(BlockType.BULLET, activeBlockId) }
+                AddBlockChip("To-do", Icons.Default.CheckBox) { onAddBlock(BlockType.CHECKLIST, activeBlockId) }
+                AddBlockChip("Code", Icons.Default.Code) { onAddBlock(BlockType.CODE, activeBlockId) }
+                AddBlockChip("Quote", Icons.Default.FormatQuote) { onAddBlock(BlockType.QUOTE, activeBlockId) }
+                AddBlockChip("Divider", Icons.Default.HorizontalRule) { onAddBlock(BlockType.DIVIDER, activeBlockId) }
             }
         }
 
@@ -609,7 +622,10 @@ private fun BlockRow(
     onToggleChecked: () -> Unit,
     onChangeType: (String) -> Unit,
     onDelete: () -> Unit,
-    onEnter: () -> Unit = {}
+    onEnter: () -> Unit = {},
+    onFocused: () -> Unit = {},
+    shouldFocus: Boolean = false,
+    onFocusHandled: () -> Unit = {}
 ) {
     // A divider block is purely visual: render a rule with just a delete affordance.
     if (block.type == BlockType.DIVIDER) {
@@ -629,6 +645,14 @@ private fun BlockRow(
 
     var text by remember(block.id) { mutableStateOf(block.content) }
     var menuExpanded by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(shouldFocus) {
+        if (shouldFocus) {
+            try { focusRequester.requestFocus() } catch (_: Exception) {}
+            onFocusHandled()
+        }
+    }
 
     val fontSize = if (block.type == BlockType.HEADING) 20.sp else 15.sp
     val placeholder = when (block.type) {
@@ -708,6 +732,8 @@ private fun BlockRow(
                 unfocusedTextColor = Color.White
             ),
             modifier = fieldModifier
+                .focusRequester(focusRequester)
+                .onFocusChanged { if (it.isFocused) onFocused() }
         )
 
         Box {
@@ -746,7 +772,7 @@ fun KnowledgeWorkspaceScreenPreview() {
             onCreatePage = { _, _, _ -> },
             onRenamePage = { _, _ -> },
             onDeletePage = {},
-            onAddBlock = {},
+            onAddBlock = { _, _ -> },
             onUpdateBlockContent = { _, _ -> },
             onToggleBlockChecked = {},
             onChangeBlockType = { _, _ -> },
