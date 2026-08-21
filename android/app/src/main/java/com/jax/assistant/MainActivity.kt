@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
@@ -20,6 +21,7 @@ import com.jax.assistant.ui.screens.MainScreen
 import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.voice.VoiceManager
 import com.jax.assistant.worker.DailyAgentWorker
+import com.jax.assistant.worker.ConsolidationWorker
 import com.jax.assistant.worker.WeeklyReviewWorker
 import java.util.concurrent.TimeUnit
 
@@ -42,11 +44,17 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val googleSignInLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            viewModel.completeGoogleSignIn(result.data)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Setup WorkManager for Daily 9:00 AM Agent Briefing
         scheduleDailyBriefingWorker()
+        scheduleConsolidationWorker()
         // Setup WorkManager for the weekly executive review
         scheduleWeeklyReviewWorker()
 
@@ -58,6 +66,12 @@ class MainActivity : ComponentActivity() {
                 val apiKey by viewModel.apiKey.collectAsState()
                 val selectedModel by viewModel.selectedModel.collectAsState()
                 val developerMode by viewModel.developerMode.collectAsState()
+                val dailyAutomationEnabled by viewModel.dailyAutomationEnabled.collectAsState()
+                val taskContextAwarenessEnabled by viewModel.taskContextAwarenessEnabled.collectAsState()
+                val voiceResponsesEnabled by viewModel.voiceResponsesEnabled.collectAsState()
+                val signedInEmail by viewModel.signedInEmail.collectAsState()
+                val syncStatus by viewModel.syncStatus.collectAsState()
+                val isSyncing by viewModel.isSyncing.collectAsState()
                 val requestLogs by viewModel.requestLogs.collectAsState()
                 val pages by viewModel.pages.collectAsState()
                 val selectedPageId by viewModel.selectedPageId.collectAsState()
@@ -72,6 +86,11 @@ class MainActivity : ComponentActivity() {
                 val isListening by viewModel.isListening.collectAsState()
                 val conversationMode by viewModel.conversationMode.collectAsState()
                 val focusBlockId by viewModel.focusBlockId.collectAsState()
+                val visionAnalysis by viewModel.visionAnalysis.collectAsState()
+                val isAnalyzingImage by viewModel.isAnalyzingImage.collectAsState()
+                val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    uri?.let { viewModel.analyzeImage(it) }
+                }
 
                 // Deep-link: the 9 AM briefing notification opens straight to the Briefing tab;
                 // the weekly review notification opens the Executive Dashboard.
@@ -115,6 +134,18 @@ class MainActivity : ComponentActivity() {
                     apiKey = apiKey,
                     selectedModel = selectedModel,
                     developerMode = developerMode,
+                    dailyAutomationEnabled = dailyAutomationEnabled,
+                    onToggleDailyAutomation = { viewModel.setDailyAutomationEnabled(it) },
+                    taskContextAwarenessEnabled = taskContextAwarenessEnabled,
+                    onToggleTaskContextAwareness = { viewModel.setTaskContextAwarenessEnabled(it) },
+                    voiceResponsesEnabled = voiceResponsesEnabled,
+                    onToggleVoiceResponses = { viewModel.setVoiceResponsesEnabled(it) },
+                    signedInEmail = signedInEmail,
+                    syncStatus = syncStatus,
+                    isSyncing = isSyncing,
+                    onGoogleSignIn = { googleSignInLauncher.launch(viewModel.googleSignInIntent()) },
+                    onSignOut = { viewModel.signOut() },
+                    onSyncNow = { viewModel.syncNow() },
                     modelCatalog = viewModel.getModelCatalog(),
                     requestLogs = requestLogs,
                     onSendMessage = { input ->
@@ -211,14 +242,18 @@ class MainActivity : ComponentActivity() {
                         viewModel.startNewChat()
                     },
                     onSpeakBriefing = { text ->
-                        voiceManager.speak(text)
+                        if (voiceResponsesEnabled) voiceManager.speak(text)
                     },
                     onStopSpeaking = {
                         voiceManager.stopSpeaking()
                     },
                     onRunBriefingNow = {
                         runBriefingNow()
-                    }
+                    },
+                    onClearAllData = { viewModel.clearAllLocalData() },
+                    visionAnalysis = visionAnalysis,
+                    isAnalyzingImage = isAnalyzingImage,
+                    onChooseVisionImage = { imagePicker.launch("image/*") }
                 )
             }
         }
@@ -230,10 +265,10 @@ class MainActivity : ComponentActivity() {
         if (command != null) {
             val reply = deviceController.execute(command)
             viewModel.logAssistantAction(input, reply)
-            voiceManager.speak(reply)
+            if (viewModel.voiceResponsesEnabled.value) voiceManager.speak(reply)
         } else {
             viewModel.sendMessage(input) { speechText ->
-                voiceManager.speak(speechText)
+                if (viewModel.voiceResponsesEnabled.value) voiceManager.speak(speechText)
             }
         }
     }
@@ -272,6 +307,18 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun scheduleConsolidationWorker() {
+        val request = PeriodicWorkRequestBuilder<ConsolidationWorker>(24, TimeUnit.HOURS)
+            .setInitialDelay(computeDelayToNext9pmMillis(), TimeUnit.MILLISECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "JaxConsolidationWork",
+            ExistingPeriodicWorkPolicy.UPDATE,
+            request
+        )
+    }
+
     // Enqueues the daily briefing worker immediately so the 9 AM notification can be tested on demand.
     private fun runBriefingNow() {
         val request = OneTimeWorkRequestBuilder<DailyAgentWorker>().build()
@@ -285,6 +332,18 @@ class MainActivity : ComponentActivity() {
         val next = java.util.Calendar.getInstance().apply {
             set(java.util.Calendar.HOUR_OF_DAY, com.jax.assistant.config.AppConfig.DAILY_BRIEFING_HOUR)
             set(java.util.Calendar.MINUTE, com.jax.assistant.config.AppConfig.DAILY_BRIEFING_MINUTE)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+            if (!after(now)) add(java.util.Calendar.DAY_OF_YEAR, 1)
+        }
+        return next.timeInMillis - now.timeInMillis
+    }
+
+    private fun computeDelayToNext9pmMillis(): Long {
+        val now = java.util.Calendar.getInstance()
+        val next = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 21)
+            set(java.util.Calendar.MINUTE, 0)
             set(java.util.Calendar.SECOND, 0)
             set(java.util.Calendar.MILLISECOND, 0)
             if (!after(now)) add(java.util.Calendar.DAY_OF_YEAR, 1)

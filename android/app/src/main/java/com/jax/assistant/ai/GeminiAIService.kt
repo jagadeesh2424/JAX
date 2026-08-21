@@ -10,13 +10,23 @@ class GeminiAIService(
     val router = AIRouter(context)
 
     override suspend fun generate(prompt: String, modelName: String): String {
-        val capability = inferCapability(prompt)
+        return generateFor(prompt, modelName, inferCapability(prompt), requireJson = true)
+    }
+
+    // Explicit role routing lets callers select a model capability without brittle prompt
+    // keyword inference. AIRouter still owns health checks, fallbacks, and model ranking.
+    suspend fun generateFor(
+        prompt: String,
+        modelName: String,
+        capability: TaskCapability,
+        requireJson: Boolean
+    ): String {
         return router.route(
             prompt = prompt,
             apiKey = apiKey,
             requestedModel = modelName,
             capability = capability,
-            requireJson = true
+            requireJson = requireJson
         )
     }
 

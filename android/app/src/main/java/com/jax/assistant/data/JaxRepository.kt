@@ -1,8 +1,10 @@
 package com.jax.assistant.data
 
 import android.content.Context
+import android.net.Uri
 import com.jax.assistant.ai.JaxParseResult
 import com.jax.assistant.ai.MemoryEngine
+import com.jax.assistant.ai.VectorUtils
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.agent.AgentController
 import com.jax.assistant.ai.agent.AgentOrchestrator
@@ -19,6 +21,7 @@ import com.jax.assistant.ai.agent.tools.SearchTasksTool
 import com.jax.assistant.ai.agent.tools.SetAlarmTool
 import com.jax.assistant.ai.agent.tools.SetTimerTool
 import com.jax.assistant.ai.agent.tools.StoreMemoryTool
+import com.jax.assistant.ai.agent.tools.UpdateProfileTool
 import com.jax.assistant.ai.agent.tools.WebSearchTool
 import com.jax.assistant.device.DeviceController
 import com.jax.assistant.ai.RequestLog
@@ -46,6 +49,7 @@ class JaxRepository(context: Context) {
     private val deviceController = DeviceController(context.applicationContext)
     private val chatRepo = locator.chat
     private val agentRunRepo = locator.agentRuns
+    private val factEmbeddingRepo = locator.factEmbeddings
 
     // Phase 1 agent: tool registry + controlled reasoning loop over the existing AI router.
     private val agent: AgentOrchestrator by lazy {
@@ -61,13 +65,14 @@ class JaxRepository(context: Context) {
                 OpenAppTool(deviceController),
                 WebSearchTool(deviceController),
                 NavigateTool(deviceController),
-                DialTool(deviceController)
+                DialTool(deviceController),
+                UpdateProfileTool(prefs)
             )
         )
         AgentOrchestrator(
             registry = registry,
             controller = AgentController(),
-            generate = { prompt, model -> aiRepo.generate(prompt, model) }
+            generate = { prompt, model -> aiRepo.generateAgent(prompt, model) }
         )
     }
 
@@ -86,6 +91,22 @@ class JaxRepository(context: Context) {
 
     fun setDeveloperMode(enabled: Boolean) = prefs.setDeveloperMode(enabled)
 
+    fun isDailyAutomationEnabled(): Boolean = prefs.isDailyAutomationEnabled()
+
+    fun setDailyAutomationEnabled(enabled: Boolean) = prefs.setDailyAutomationEnabled(enabled)
+
+    fun isTaskContextAwarenessEnabled(): Boolean = prefs.isTaskContextAwarenessEnabled()
+
+    fun setTaskContextAwarenessEnabled(enabled: Boolean) = prefs.setTaskContextAwarenessEnabled(enabled)
+
+    fun isVoiceResponsesEnabled(): Boolean = prefs.isVoiceResponsesEnabled()
+
+    fun setVoiceResponsesEnabled(enabled: Boolean) = prefs.setVoiceResponsesEnabled(enabled)
+
+    fun getUserProfile(): String = prefs.getUserProfile()
+
+    fun saveUserProfile(profile: String) = prefs.saveUserProfile(profile)
+
     fun getModelCatalog(): List<ModelInfo> = aiRepo.getModelCatalog()
 
     val requestLogs: StateFlow<List<RequestLog>> get() = aiRepo.requestLogs
@@ -96,6 +117,8 @@ class JaxRepository(context: Context) {
 
     suspend fun testConnection(modelName: String = getSelectedModel()): TestConnectionResult =
         aiRepo.testConnection(modelName)
+
+    suspend fun analyzeImage(imageUri: Uri): String = aiRepo.analyzeImage(imageUri, getSelectedModel())
 
     fun getAllTasks(): Flow<List<TaskEntity>> = taskRepo.getAllTasks()
 
@@ -136,12 +159,15 @@ class JaxRepository(context: Context) {
         conversationSummary: String = ""
     ): String {
         val openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
-        val relevant = MemoryEngine().selectRelevantMemories(input, facts)
+        val relevant = selectRelevantFactsHybrid(input, facts)
+        val learnedWorkflows = agentRunRepo.learnedWorkflows()
         val context = ContextAssembler().build(
             relevantFacts = relevant,
             openTasks = openTasks,
             conversationSummary = conversationSummary,
-            currentDate = java.time.LocalDate.now().toString()
+            currentDate = java.time.LocalDate.now().toString(),
+            userProfile = prefs.getUserProfile(),
+            learnedWorkflows = learnedWorkflows
         )
         // Durable run: capture this turn's events and persist the run + events to Room.
         val runId = java.util.UUID.randomUUID().toString()
@@ -154,11 +180,46 @@ class JaxRepository(context: Context) {
         return result.reply
     }
 
+    // Hybrid memory retrieval: semantic (embeddings) + lexical (keyword), best-effort.
+    // Embeddings backfill a few facts per turn, so semantic recall warms up over the first messages.
+    private suspend fun selectRelevantFactsHybrid(query: String, facts: List<FactEntity>): List<FactEntity> {
+        if (facts.isEmpty()) return emptyList()
+        val lexical = MemoryEngine().selectRelevantMemories(query, facts)
+        val queryVec = aiRepo.embed(query) ?: return lexical
+        val vectors = factEmbeddingRepo.getAll().toMutableMap()
+        var backfilled = 0
+        for (f in facts) {
+            if (!vectors.containsKey(f.id) && backfilled < 4) {
+                val v = aiRepo.embed("${f.title}. ${f.details}")
+                if (v != null) {
+                    factEmbeddingRepo.save(f.id, v)
+                    vectors[f.id] = v
+                    backfilled++
+                }
+            }
+        }
+        val semantic = facts
+            .mapNotNull { f -> vectors[f.id]?.let { f to VectorUtils.cosine(queryVec, it) } }
+            .filter { it.second > 0.3f }
+            .sortedByDescending { it.second }
+            .take(5)
+            .map { it.first }
+        val merged = LinkedHashSet<FactEntity>()
+        semantic.forEach { merged.add(it) }
+        lexical.forEach { merged.add(it) }
+        return merged.take(6).toList()
+    }
+
     suspend fun getChatHistory(): List<ChatMessageEntity> = chatRepo.getHistory()
 
     suspend fun saveChatMessage(message: ChatMessageEntity) = chatRepo.save(message)
 
     suspend fun clearChatHistory() = chatRepo.clear()
+
+    suspend fun clearAllLocalData() {
+        locator.clearAllLocalData()
+        aiRepo.updateApiKey("")
+    }
 
     // ---- Executive Intelligence (Phase 2) ----
 

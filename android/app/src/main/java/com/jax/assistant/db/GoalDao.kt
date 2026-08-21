@@ -11,6 +11,9 @@ interface GoalDao {
     @Query("SELECT * FROM goals WHERE isCompleted = 0")
     suspend fun getOpenGoals(): List<GoalEntity>
 
+    @Query("SELECT * FROM goals")
+    suspend fun getAllGoalsList(): List<GoalEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGoal(goal: GoalEntity)
 

@@ -52,16 +52,18 @@ class NotesRepository(private val db: AppDatabase) {
     // ---- Knowledge-graph edges ----
 
     fun getRelatedPages(pageId: String): Flow<List<NotePageEntity>> =
-        noteDao.getRelatedPages(pageId)
+        noteDao.getRelatedPagesWithinTwoHops(pageId)
 
-    suspend fun linkPages(fromPageId: String, toPageId: String) {
+    suspend fun linkPages(fromPageId: String, toPageId: String, relation: String = "RELATED", validUntil: Long? = null) {
         if (fromPageId == toPageId) return
         if (noteDao.countLinkBetween(fromPageId, toPageId) > 0) return
         noteDao.insertPageLink(
             PageLinkEntity(
                 id = UUID.randomUUID().toString(),
                 fromPageId = fromPageId,
-                toPageId = toPageId
+                toPageId = toPageId,
+                relation = relation.trim().uppercase().ifBlank { "RELATED" },
+                validUntil = validUntil
             )
         )
     }

@@ -8,6 +8,9 @@ interface ProjectDao {
     @Query("SELECT * FROM projects ORDER BY updatedAt DESC")
     fun getAllProjects(): Flow<List<ProjectEntity>>
 
+    @Query("SELECT * FROM projects")
+    suspend fun getAllProjectsList(): List<ProjectEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProject(project: ProjectEntity)
 

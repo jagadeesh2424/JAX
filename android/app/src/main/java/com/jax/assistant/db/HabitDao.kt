@@ -8,6 +8,9 @@ interface HabitDao {
     @Query("SELECT * FROM habits ORDER BY createdAt DESC")
     fun getAllHabits(): Flow<List<HabitEntity>>
 
+    @Query("SELECT * FROM habits")
+    suspend fun getAllHabitsList(): List<HabitEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHabit(habit: HabitEntity)
 

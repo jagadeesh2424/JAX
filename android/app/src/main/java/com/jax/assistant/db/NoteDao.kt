@@ -8,6 +8,15 @@ interface NoteDao {
     @Query("SELECT * FROM note_pages ORDER BY updatedAt DESC")
     fun getAllPages(): Flow<List<NotePageEntity>>
 
+    @Query("SELECT * FROM note_pages")
+    suspend fun getAllPagesList(): List<NotePageEntity>
+
+    @Query("SELECT * FROM note_blocks")
+    suspend fun getAllBlocksList(): List<NoteBlockEntity>
+
+    @Query("SELECT * FROM page_links")
+    suspend fun getAllPageLinksList(): List<PageLinkEntity>
+
     // Cross-content search over page title/category/tags and block content.
     @Query(
         "SELECT DISTINCT p.* FROM note_pages p " +
@@ -77,4 +86,15 @@ interface NoteDao {
             "ORDER BY p.updatedAt DESC"
     )
     fun getRelatedPages(pageId: String): Flow<List<NotePageEntity>>
+
+    @Query(
+        "WITH RECURSIVE graph(pageId, depth) AS (" +
+            "SELECT :pageId, 0 UNION ALL " +
+            "SELECT CASE WHEN l.fromPageId = graph.pageId THEN l.toPageId ELSE l.fromPageId END, graph.depth + 1 " +
+            "FROM page_links l JOIN graph ON l.fromPageId = graph.pageId OR l.toPageId = graph.pageId " +
+            "WHERE graph.depth < 2 AND l.validFrom <= :now AND (l.validUntil IS NULL OR l.validUntil >= :now)" +
+            ") SELECT DISTINCT p.* FROM note_pages p JOIN graph g ON p.id = g.pageId " +
+            "WHERE g.depth > 0 ORDER BY p.updatedAt DESC"
+    )
+    fun getRelatedPagesWithinTwoHops(pageId: String, now: Long = System.currentTimeMillis()): Flow<List<NotePageEntity>>
 }

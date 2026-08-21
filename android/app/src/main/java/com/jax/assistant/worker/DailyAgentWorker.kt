@@ -10,7 +10,10 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.jax.assistant.MainActivity
+import com.jax.assistant.ai.agent.ProactiveInsightEngine
+import com.jax.assistant.data.UserPreferencesRepository
 import com.jax.assistant.db.AppDatabase
+import java.time.LocalDate
 
 class DailyAgentWorker(
     private val appContext: Context,
@@ -18,14 +21,15 @@ class DailyAgentWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        val preferences = UserPreferencesRepository(appContext)
+        if (!preferences.isDailyAutomationEnabled()) return Result.success()
         val db = AppDatabase.getDatabase(appContext)
-        val highPriorityTasks = db.taskDao().getOpenHighPriorityTasks()
-
-        val summaryText = if (highPriorityTasks.isNotEmpty()) {
-            "Good morning Jagadeesh. You have ${highPriorityTasks.size} HIGH priority task(s) scheduled for today."
-        } else {
-            "Good morning Jagadeesh. All high priority tasks are clear. Ready for new briefings."
-        }
+        val tasks = db.taskDao().getAllTasksList()
+        val summaryText = ProactiveInsightEngine().dailyBriefing(
+            tasks,
+            LocalDate.now(),
+            preferences.isTaskContextAwarenessEnabled()
+        )
 
         showNotification("J.A.X. Daily Briefing", summaryText)
         return Result.success()

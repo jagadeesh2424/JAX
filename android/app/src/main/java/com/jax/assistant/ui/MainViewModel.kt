@@ -1,6 +1,8 @@
 package com.jax.assistant.ui
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jax.assistant.ai.JaxParseResult
@@ -31,6 +33,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = JaxRepository(application)
     private val notesRepository = ServiceLocator.apply { init(application) }.notes
+    private val authRepository = ServiceLocator.auth
+    private val firebaseSync = ServiceLocator.firebaseSync
 
     private val _messages = MutableStateFlow<List<ComposeChatMessage>>(
         listOf(
@@ -53,6 +57,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _developerMode = MutableStateFlow<Boolean>(repository.isDeveloperMode())
     val developerMode: StateFlow<Boolean> = _developerMode.asStateFlow()
+
+    private val _dailyAutomationEnabled = MutableStateFlow(repository.isDailyAutomationEnabled())
+    val dailyAutomationEnabled: StateFlow<Boolean> = _dailyAutomationEnabled.asStateFlow()
+
+    private val _taskContextAwarenessEnabled = MutableStateFlow(repository.isTaskContextAwarenessEnabled())
+    val taskContextAwarenessEnabled: StateFlow<Boolean> = _taskContextAwarenessEnabled.asStateFlow()
+
+    private val _voiceResponsesEnabled = MutableStateFlow(repository.isVoiceResponsesEnabled())
+    val voiceResponsesEnabled: StateFlow<Boolean> = _voiceResponsesEnabled.asStateFlow()
+
+    private val _signedInEmail = MutableStateFlow(authRepository.currentEmail)
+    val signedInEmail: StateFlow<String?> = _signedInEmail.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow("")
+    val syncStatus: StateFlow<String> = _syncStatus.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
     val requestLogs: StateFlow<List<RequestLog>> = repository.requestLogs
 
@@ -103,6 +125,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isPlanning = MutableStateFlow<Boolean>(false)
     val isPlanning: StateFlow<Boolean> = _isPlanning.asStateFlow()
+
+    private val _visionAnalysis = MutableStateFlow("")
+    val visionAnalysis: StateFlow<String> = _visionAnalysis.asStateFlow()
+
+    private val _isAnalyzingImage = MutableStateFlow(false)
+    val isAnalyzingImage: StateFlow<Boolean> = _isAnalyzingImage.asStateFlow()
 
     init {
         // Load persisted chat history (Phase 2 durable state).
@@ -187,6 +215,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _messages.value = listOf(
                 ComposeChatMessage("1", "Good day, Jagadeesh. J.A.X. is active and synced to your Room database.", false, "Now")
             )
+        }
+    }
+
+    fun clearAllLocalData() {
+        viewModelScope.launch {
+            repository.clearAllLocalData()
+            _messages.value = listOf(
+                ComposeChatMessage("1", "Local data cleared. Add an API key to continue using J.A.X.", false, "Now")
+            )
+            _apiKey.value = repository.getApiKey()
+            _selectedModel.value = repository.getSelectedModel()
+            _developerMode.value = repository.isDeveloperMode()
+            _dailyAutomationEnabled.value = repository.isDailyAutomationEnabled()
+            _taskContextAwarenessEnabled.value = repository.isTaskContextAwarenessEnabled()
+            _voiceResponsesEnabled.value = repository.isVoiceResponsesEnabled()
         }
     }
 
@@ -287,6 +330,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDeveloperMode(enabled: Boolean) {
         repository.setDeveloperMode(enabled)
         _developerMode.value = enabled
+    }
+
+    fun setDailyAutomationEnabled(enabled: Boolean) {
+        repository.setDailyAutomationEnabled(enabled)
+        _dailyAutomationEnabled.value = enabled
+    }
+
+    fun setTaskContextAwarenessEnabled(enabled: Boolean) {
+        repository.setTaskContextAwarenessEnabled(enabled)
+        _taskContextAwarenessEnabled.value = enabled
+    }
+
+    fun setVoiceResponsesEnabled(enabled: Boolean) {
+        repository.setVoiceResponsesEnabled(enabled)
+        _voiceResponsesEnabled.value = enabled
+    }
+
+    fun googleSignInIntent(): Intent = authRepository.signInIntent()
+
+    fun completeGoogleSignIn(data: Intent?) {
+        _isSyncing.value = true
+        authRepository.completeSignIn(data) { result ->
+            viewModelScope.launch {
+                result.onSuccess { email ->
+                    _signedInEmail.value = email
+                    syncNow()
+                }.onFailure { error ->
+                    _syncStatus.value = "Sign-in failed: ${error.localizedMessage ?: "unknown error"}"
+                    _isSyncing.value = false
+                }
+            }
+        }
+    }
+
+    fun syncNow() {
+        val uid = authRepository.currentUid
+        if (uid.isNullOrBlank()) {
+            _syncStatus.value = "Sign in before syncing."
+            return
+        }
+        _isSyncing.value = true
+        viewModelScope.launch {
+            try {
+                _syncStatus.value = firebaseSync.sync(uid)
+            } catch (error: Exception) {
+                _syncStatus.value = "Sync failed: ${error.localizedMessage ?: "unknown error"}"
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    fun signOut() {
+        authRepository.signOut {
+            _signedInEmail.value = null
+            _syncStatus.value = "Signed out. Local data remains on this device."
+        }
     }
 
     fun getModelCatalog(): List<ModelInfo> = repository.getModelCatalog()
@@ -483,6 +583,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _dailyPlan.value = "Could not generate plan: ${e.localizedMessage ?: "unknown error"}"
             } finally {
                 _isPlanning.value = false
+            }
+        }
+    }
+
+    fun analyzeImage(imageUri: Uri) {
+        if (_isAnalyzingImage.value) return
+        _isAnalyzingImage.value = true
+        _visionAnalysis.value = ""
+        viewModelScope.launch {
+            try {
+                _visionAnalysis.value = repository.analyzeImage(imageUri)
+            } finally {
+                _isAnalyzingImage.value = false
             }
         }
     }

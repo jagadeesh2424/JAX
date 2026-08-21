@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.SpaceDashboard
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.*
@@ -62,6 +63,18 @@ fun MainScreen(
     onUpdateApiKey: (String) -> Unit,
     onUpdateSelectedModel: (String) -> Unit = {},
     onToggleDeveloperMode: (Boolean) -> Unit = {},
+    dailyAutomationEnabled: Boolean = true,
+    onToggleDailyAutomation: (Boolean) -> Unit = {},
+    taskContextAwarenessEnabled: Boolean = true,
+    onToggleTaskContextAwareness: (Boolean) -> Unit = {},
+    voiceResponsesEnabled: Boolean = true,
+    onToggleVoiceResponses: (Boolean) -> Unit = {},
+    signedInEmail: String? = null,
+    syncStatus: String = "",
+    isSyncing: Boolean = false,
+    onGoogleSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {},
+    onSyncNow: () -> Unit = {},
     onRunHealthCheck: ((onResult: (String) -> Unit) -> Unit)? = null,
     onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
     pages: List<NotePageEntity> = emptyList(),
@@ -110,6 +123,9 @@ fun MainScreen(
     onSpeakBriefing: (String) -> Unit,
     onStopSpeaking: () -> Unit,
     onRunBriefingNow: () -> Unit = {}
+    ,visionAnalysis: String = ""
+    ,isAnalyzingImage: Boolean = false
+    ,onChooseVisionImage: () -> Unit = {}
 ) {
     var activeTab by remember { mutableStateOf(initialTab) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings, 6: Notes, 7: Executive Dashboard
     var showDevConsole by remember { mutableStateOf(false) }
@@ -173,6 +189,14 @@ fun MainScreen(
                             Icons.Default.SpaceDashboard,
                             contentDescription = "Executive Dashboard",
                             tint = if (activeTab == 7) CyanAccent else Color.Gray
+                        )
+                    }
+
+                    IconButton(onClick = { activeTab = 8 }) {
+                        Icon(
+                            Icons.Default.PhotoCamera,
+                            contentDescription = "Vision",
+                            tint = if (activeTab == 8) CyanAccent else Color.Gray
                         )
                     }
 
@@ -323,6 +347,11 @@ fun MainScreen(
                     onToggleHabit = onToggleHabit,
                     onDeleteHabit = onDeleteHabit
                 )
+                8 -> VisionScreen(
+                    analysis = visionAnalysis,
+                    isAnalyzing = isAnalyzingImage,
+                    onChooseImage = onChooseVisionImage
+                )
                 5 -> SettingsScreen(
                     apiKey = apiKey,
                     onUpdateApiKey = onUpdateApiKey,
@@ -331,13 +360,25 @@ fun MainScreen(
                     onTestConnection = onTestConnection,
                     developerMode = developerMode,
                     onToggleDeveloperMode = onToggleDeveloperMode,
+                    dailyAutomationEnabled = dailyAutomationEnabled,
+                    onToggleDailyAutomation = onToggleDailyAutomation,
+                    taskContextAwarenessEnabled = taskContextAwarenessEnabled,
+                    onToggleTaskContextAwareness = onToggleTaskContextAwareness,
+                    voiceResponsesEnabled = voiceResponsesEnabled,
+                    onToggleVoiceResponses = onToggleVoiceResponses,
+                    signedInEmail = signedInEmail,
+                    syncStatus = syncStatus,
+                    isSyncing = isSyncing,
+                    onGoogleSignIn = onGoogleSignIn,
+                    onSignOut = onSignOut,
+                    onSyncNow = onSyncNow,
                     onOpenDevConsole = { showDevConsole = true },
                     modelCatalog = modelCatalog,
                     requestLogs = requestLogs,
                     onRunHealthCheck = onRunHealthCheck,
                     taskCount = tasks.size,
                     factCount = facts.size,
-                    onClearAllData = {}
+                    onClearAllData = onClearAllData
                 )
             }
         }

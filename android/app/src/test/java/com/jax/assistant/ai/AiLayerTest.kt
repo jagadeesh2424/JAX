@@ -1,9 +1,20 @@
 package com.jax.assistant.ai
 
 import com.jax.assistant.db.FactEntity
+import com.jax.assistant.db.AgentRunEntity
+import com.jax.assistant.db.PageLinkEntity
+import com.jax.assistant.ai.agent.WorkflowLearner
+import com.jax.assistant.ai.agent.ContextAssembler
+import com.jax.assistant.ai.agent.AgentController
+import com.jax.assistant.ai.agent.ProactiveInsightEngine
+import com.jax.assistant.ai.agent.JaxTool
+import com.jax.assistant.ai.agent.ToolParam
+import com.jax.assistant.ai.agent.ToolResult
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
+import org.json.JSONObject
+import java.time.LocalDate
 
 class AiLayerTest {
 
@@ -101,5 +112,107 @@ class AiLayerTest {
         val connectionResult = mockService.testConnection("gemini-2.0-flash")
         assertTrue(connectionResult.isSuccess)
         assertTrue(connectionResult.message.contains("gemini-2.0-flash"))
+    }
+
+    @Test
+    fun testWorkflowLearnerSuggestsRepeatedCompletedToolSequence() {
+        fun run(id: String, tools: String, status: String = "COMPLETED") = AgentRunEntity(
+            id = id,
+            goal = "Test goal",
+            status = status,
+            reply = "Done",
+            toolsUsed = tools,
+            startedAt = 1L,
+            finishedAt = 2L
+        )
+        val suggestions = WorkflowLearner().suggestions(
+            listOf(
+                run("one", "create_task,search_tasks"),
+                run("two", "create_task,search_tasks"),
+                run("three", "create_task,search_tasks", "COMPLETED_WITH_ERRORS")
+            )
+        )
+
+        assertEquals(listOf("create_task -> search_tasks (observed 2 times)"), suggestions)
+    }
+
+    @Test
+    fun testKnowledgeGraphEdgeRetainsRelationAndValidity() {
+        val link = PageLinkEntity(
+            id = "link",
+            fromPageId = "work",
+            toPageId = "project",
+            relation = "SUPPORTS",
+            validFrom = 100L,
+            validUntil = 200L
+        )
+
+        assertEquals("SUPPORTS", link.relation)
+        assertEquals(100L, link.validFrom)
+        assertEquals(200L, link.validUntil)
+    }
+
+    @Test
+    fun testContextAssemblerBoundsLargeSections() {
+        val longText = "x".repeat(2_000)
+        val context = ContextAssembler().build(
+            relevantFacts = List(8) { FactEntity("fact$it", "Fact $it", "General", longText) },
+            openTasks = emptyList(),
+            conversationSummary = longText,
+            currentDate = "2026-08-20",
+            userProfile = longText,
+            learnedWorkflows = List(4) { "workflow $it $longText" }
+        ).text
+
+        assertTrue(context.length <= 5_500)
+        assertTrue(context.contains("KNOWN FACTS:"))
+        assertTrue(context.contains("RECENT CONVERSATION:"))
+    }
+
+    @Test
+    fun testAgentControllerClassifiesDestructiveToolsAsHighRisk() {
+        val controller = AgentController()
+        val safeTool = testTool(isDestructive = false)
+        val destructiveTool = testTool(isDestructive = true)
+
+        assertEquals(AgentController.ActionRisk.LOW, controller.riskFor(safeTool, JSONObject()))
+        assertEquals(AgentController.ActionRisk.HIGH, controller.riskFor(destructiveTool, JSONObject()))
+        assertEquals(AgentController.Decision.ALLOW, controller.authorize(destructiveTool, JSONObject()))
+    }
+
+    @Test
+    fun testProactiveInsightPrioritizesOverdueTasks() {
+        val today = LocalDate.of(2026, 8, 20)
+        val message = ProactiveInsightEngine().dailyBriefing(
+            listOf(
+                TaskEntity("today", "Prepare review", "Work", "HIGH", "2026-08-20"),
+                TaskEntity("overdue", "Send report", "Work", "MED", "2026-08-19")
+            ),
+            today
+        )
+
+        assertTrue(message.contains("1 task(s) are overdue"))
+        assertTrue(message.contains("Send report"))
+    }
+
+    @Test
+    fun testProactiveInsightCanDisableTaskContext() {
+        val message = ProactiveInsightEngine().dailyBriefing(
+            listOf(TaskEntity("overdue", "Send report", "Work", "MED", "2026-08-19")),
+            LocalDate.of(2026, 8, 20),
+            useTaskContext = false
+        )
+
+        assertTrue(message.contains("All high priority tasks are clear"))
+        assertFalse(message.contains("overdue"))
+    }
+
+    private fun testTool(isDestructive: Boolean): JaxTool = object : JaxTool {
+        override val name = "test_tool"
+        override val description = "Test tool"
+        override val parameters = emptyList<ToolParam>()
+        override val isDestructive = isDestructive
+
+        override suspend fun execute(args: JSONObject): ToolResult = ToolResult.ok("done")
     }
 }

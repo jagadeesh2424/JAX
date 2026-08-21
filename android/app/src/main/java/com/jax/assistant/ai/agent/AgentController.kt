@@ -8,10 +8,17 @@ import org.json.JSONObject
 class AgentController {
 
     enum class Decision { ALLOW, DENY }
+    enum class ActionRisk { LOW, HIGH }
+
+    // The classification is deliberately separate from enforcement. Phase 4 can add a
+    // confirmation UI without changing tools or the orchestration loop again.
+    fun riskFor(tool: JaxTool, args: JSONObject): ActionRisk =
+        if (tool.isDestructive) ActionRisk.HIGH else ActionRisk.LOW
 
     fun authorize(tool: JaxTool, args: JSONObject): Decision {
-        // All registered tools are allowed for now. Destructive tools are flagged via
-        // JaxTool.isDestructive so a confirmation step can be inserted here later.
+        riskFor(tool, args)
+        // Current assistant mode is user-directed: no background action path exists yet.
+        // Confirmation enforcement is introduced with the corresponding UI interaction.
         return Decision.ALLOW
     }
 }

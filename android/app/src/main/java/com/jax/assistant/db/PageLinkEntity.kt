@@ -14,5 +14,8 @@ data class PageLinkEntity(
     @PrimaryKey val id: String,
     val fromPageId: String,
     val toPageId: String,
+    val relation: String = "RELATED",
+    val validFrom: Long = System.currentTimeMillis(),
+    val validUntil: Long? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

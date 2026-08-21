@@ -47,6 +47,18 @@ fun SettingsScreen(
     onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
     developerMode: Boolean = false,
     onToggleDeveloperMode: (Boolean) -> Unit = {},
+    dailyAutomationEnabled: Boolean = true,
+    onToggleDailyAutomation: (Boolean) -> Unit = {},
+    taskContextAwarenessEnabled: Boolean = true,
+    onToggleTaskContextAwareness: (Boolean) -> Unit = {},
+    voiceResponsesEnabled: Boolean = true,
+    onToggleVoiceResponses: (Boolean) -> Unit = {},
+    signedInEmail: String? = null,
+    syncStatus: String = "",
+    isSyncing: Boolean = false,
+    onGoogleSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {},
+    onSyncNow: () -> Unit = {},
     onOpenDevConsole: () -> Unit = {},
     modelCatalog: List<ModelInfo> = emptyList(),
     requestLogs: List<RequestLog> = emptyList(),
@@ -57,13 +69,12 @@ fun SettingsScreen(
 ) {
     var inputKey by remember(apiKey) { mutableStateOf(apiKey) }
     var isKeyVisible by remember { mutableStateOf(false) }
-    var voiceResponsesEnabled by remember { mutableStateOf(true) }
-    var dailyWorkerEnabled by remember { mutableStateOf(true) }
     var showSavedToast by remember { mutableStateOf(false) }
 
     var isTestingConnection by remember { mutableStateOf(false) }
     var testResultMsg by remember { mutableStateOf<String?>(null) }
     var isTestSuccess by remember { mutableStateOf(false) }
+    var showEraseConfirmation by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -78,6 +89,35 @@ fun SettingsScreen(
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Column(
+            modifier = Modifier.fillMaxWidth().background(SurfaceDark, shape = RoundedCornerShape(14.dp)).padding(16.dp)
+        ) {
+            Text("CROSS-DEVICE SYNC", color = CyanAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            if (signedInEmail == null) {
+                Text("Sign in with Google to back up and restore your J.A.X. data on this Firebase project.", color = Color.Gray, fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(onClick = onGoogleSignIn, colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)) {
+                    Text("Sign in with Google", color = PureDark, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Text("Signed in as $signedInEmail", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onSyncNow, enabled = !isSyncing, colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)) {
+                        Text(if (isSyncing) "Syncing..." else "Sync now", color = PureDark)
+                    }
+                    TextButton(onClick = onSignOut, enabled = !isSyncing) { Text("Sign out", color = Color(0xFFFF6B6B)) }
+                }
+            }
+            if (syncStatus.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(syncStatus, color = Color.LightGray, fontSize = 11.sp)
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -412,7 +452,7 @@ fun SettingsScreen(
                 }
                 Switch(
                     checked = voiceResponsesEnabled,
-                    onCheckedChange = { voiceResponsesEnabled = it },
+                    onCheckedChange = onToggleVoiceResponses,
                     colors = SwitchDefaults.colors(checkedThumbColor = PureDark, checkedTrackColor = CyanAccent)
                 )
             }
@@ -429,11 +469,67 @@ fun SettingsScreen(
                     Text(text = "Background WorkManager periodic task", color = Color.Gray, fontSize = 11.sp)
                 }
                 Switch(
-                    checked = dailyWorkerEnabled,
-                    onCheckedChange = { dailyWorkerEnabled = it },
+                    checked = dailyAutomationEnabled,
+                    onCheckedChange = onToggleDailyAutomation,
                     colors = SwitchDefaults.colors(checkedThumbColor = PureDark, checkedTrackColor = CyanAccent)
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color.DarkGray)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Task Context Awareness", color = Color.White, fontSize = 14.sp)
+                    Text(text = "Use due dates and priority only in local daily briefings", color = Color.Gray, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = taskContextAwarenessEnabled,
+                    onCheckedChange = onToggleTaskContextAwareness,
+                    colors = SwitchDefaults.colors(checkedThumbColor = PureDark, checkedTrackColor = CyanAccent)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
+                .padding(16.dp)
+        ) {
+            Text(text = "LOCAL DATA", color = Color(0xFFFF6B6B), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Erase tasks, memories, notes, chat history, and local settings from this device.",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(onClick = { showEraseConfirmation = true }) {
+                Text("Erase Local Data", color = Color(0xFFFF6B6B))
+            }
+        }
+
+        if (showEraseConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showEraseConfirmation = false },
+                title = { Text("Erase local data?") },
+                text = { Text("This removes J.A.X. data and settings on this device, including the API key. This cannot be undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showEraseConfirmation = false
+                        onClearAllData()
+                    }) { Text("Erase", color = Color(0xFFFF6B6B)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEraseConfirmation = false }) { Text("Cancel") }
+                }
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
