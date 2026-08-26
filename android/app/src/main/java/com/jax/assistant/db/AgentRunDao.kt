@@ -10,6 +10,24 @@ interface AgentRunDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRun(run: AgentRunEntity)
 
+    @Query(
+        "UPDATE agent_runs SET status = :status, reply = :reply, toolsUsed = :toolsUsed, " +
+            "currentStep = :currentStep, recoveryState = :recoveryState, finishedAt = :finishedAt " +
+            "WHERE id = :runId"
+    )
+    suspend fun updateProgress(
+        runId: String,
+        status: String,
+        reply: String,
+        toolsUsed: String,
+        currentStep: Int,
+        recoveryState: String,
+        finishedAt: Long
+    )
+
+    @Query("SELECT * FROM agent_runs WHERE status = 'RUNNING' ORDER BY startedAt DESC")
+    suspend fun recoverableRuns(): List<AgentRunEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEvent(event: AgentEventEntity)
 

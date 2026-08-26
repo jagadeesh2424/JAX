@@ -41,5 +41,6 @@ The core executive loop is implemented through the Personal-OS features
 (conversation, tasks, calendar, briefing, voice, memory, knowledge workspace,
 dashboard, goals, projects, habits, device control).
 
-All compile-clean via static analysis; Mac build + device test still pending.
+The Android debug APK now builds successfully with Gradle 8.5 and Java 21.
+Device validation is still pending.
 See 01_ROADMAP.md for per-slice status.

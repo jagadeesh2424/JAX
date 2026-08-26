@@ -11,6 +11,66 @@ import java.util.UUID
 
 // Persists agent runs and their event streams (Phase 2 durable state).
 class AgentRunRepository(private val dao: AgentRunDao) {
+    suspend fun startRun(
+        runId: String,
+        goal: String,
+        maxSteps: Int,
+        startedAt: Long = System.currentTimeMillis()
+    ) {
+        dao.insertRun(
+            AgentRunEntity(
+                id = runId,
+                goal = goal,
+                status = "RUNNING",
+                reply = "",
+                toolsUsed = "",
+                startedAt = startedAt,
+                finishedAt = 0L,
+                plan = "Bounded agent loop",
+                currentStep = 0,
+                maxSteps = maxSteps,
+                recoveryState = "Started; awaiting first model decision"
+            )
+        )
+    }
+
+    suspend fun checkpoint(
+        runId: String,
+        step: Int,
+        state: String,
+        toolsUsed: List<String>
+    ) {
+        dao.updateProgress(
+            runId = runId,
+            status = "RUNNING",
+            reply = "",
+            toolsUsed = toolsUsed.joinToString(","),
+            currentStep = step,
+            recoveryState = state,
+            finishedAt = 0L
+        )
+    }
+
+    suspend fun recoverableRuns(): List<AgentRunEntity> = dao.recoverableRuns()
+
+    suspend fun finishRun(
+        runId: String,
+        status: String,
+        reply: String,
+        toolsUsed: List<String>,
+        finishedAt: Long = System.currentTimeMillis()
+    ) {
+        dao.updateProgress(
+            runId = runId,
+            status = status,
+            reply = reply,
+            toolsUsed = toolsUsed.joinToString(","),
+            currentStep = 0,
+            recoveryState = if (status == "COMPLETED") "Completed" else "Completed with errors",
+            finishedAt = finishedAt
+        )
+    }
+
     suspend fun learnedWorkflows(limit: Int = 2): List<String> =
         WorkflowLearner().suggestions(dao.completedRuns(50), limit)
 
@@ -50,9 +110,11 @@ class AgentRunRepository(private val dao: AgentRunDao) {
         finishedAt: Long,
         events: List<AgentEvent>
     ) {
-        dao.insertRun(
-            AgentRunEntity(runId, goal, status, reply, toolsUsed.joinToString(","), startedAt, finishedAt)
-        )
+        dao.insertRun(AgentRunEntity(runId, goal, status, reply, toolsUsed.joinToString(","), startedAt, finishedAt))
+        saveEvents(runId, events)
+    }
+
+    suspend fun saveEvents(runId: String, events: List<AgentEvent>) {
         events.forEach { e ->
             dao.insertEvent(AgentEventEntity(UUID.randomUUID().toString(), runId, e.type, e.detail, e.timestamp))
         }

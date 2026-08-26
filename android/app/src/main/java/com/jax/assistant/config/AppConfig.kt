@@ -24,6 +24,9 @@ object AppConfig {
     // ---------------------------------------------------------------------
     /** Spoken prefixes stripped before sending to JAX (e.g. "Hey JAX, add a task"). Keep lower-case. */
     val WAKE_PHRASES = listOf("hey jax", "hi jax", "okay jax", "ok jax", "hey jacks", "jax")
+    /** Android speech recognition locale. Change to another BCP-47 tag for a different voice language. */
+    const val VOICE_LANGUAGE = "en-IN"
+    const val VOICE_MAX_RESULTS = 5
 
     // ---------------------------------------------------------------------
     // Daily briefing notification

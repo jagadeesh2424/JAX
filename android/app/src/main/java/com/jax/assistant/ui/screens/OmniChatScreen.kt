@@ -48,12 +48,17 @@ fun OmniChatScreen(
     messages: List<ComposeChatMessage>,
     onSendMessage: (String) -> Unit,
     onMicClick: () -> Unit,
+    voiceDraft: String = "",
     isListening: Boolean = false,
     conversationMode: Boolean = false,
     onToggleConversationMode: () -> Unit = {},
     onNewChat: () -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf("") }
+
+    LaunchedEffect(voiceDraft) {
+        if (voiceDraft.isNotBlank()) inputText = voiceDraft
+    }
 
     // Pulsing animation for the mic while actively listening.
     val pulse = rememberInfiniteTransition(label = "micPulse")
@@ -258,4 +263,3 @@ fun OmniChatScreenPreview() {
         )
     }
 }
-

@@ -56,15 +56,15 @@ class GeminiBrain(
             val jsonText = extractJsonObjectString(rawText)
             val json = JSONObject(jsonText)
 
-            val itemType = json.optString("itemType", "QUESTION").uppercase()
-            val reply = json.optString("reply", "Understood, Jagadeesh.")
-            val title = json.optString("title", originalInput.take(30))
-            val category = json.optString("category", "General")
+            val itemType = jsonString(json, jsonText, "itemType", "QUESTION").uppercase()
+            val reply = jsonString(json, jsonText, "reply", "Understood, Jagadeesh.")
+            val title = jsonString(json, jsonText, "title", originalInput.take(30))
+            val category = jsonString(json, jsonText, "category", "General")
 
             when (itemType) {
                 "TASK" -> {
-                    val priority = json.optString("priority", "MED").uppercase()
-                    val deadline = json.optString("deadline", "").ifBlank { null }
+                    val priority = jsonString(json, jsonText, "priority", "MED").uppercase()
+                    val deadline = jsonString(json, jsonText, "deadline", "").ifBlank { null }
                     val task = TaskEntity(
                         id = UUID.randomUUID().toString(),
                         title = title,
@@ -76,7 +76,7 @@ class GeminiBrain(
                     JaxParseResult.TaskResult(task, reply)
                 }
                 "MEMORY" -> {
-                    val details = json.optString("details", originalInput)
+                    val details = jsonString(json, jsonText, "details", originalInput)
                     val fact = FactEntity(
                         id = UUID.randomUUID().toString(),
                         title = title,
@@ -101,5 +101,15 @@ class GeminiBrain(
             return trimmed.substring(start, end + 1)
         }
         return trimmed
+    }
+
+    // Android's JSONObject optString overloads are nullable in some local JVM stubs.
+    // Read through opt() so unit tests and device builds share the same behavior.
+    private fun jsonString(json: JSONObject, rawJson: String, key: String, fallback: String): String {
+        val parsed = (json.opt(key) as? String)?.takeIf { it.isNotBlank() }
+        if (parsed != null) return parsed
+        val escapedKey = Regex.escape(key)
+        return Regex("\\\"$escapedKey\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"")
+            .find(rawJson)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() } ?: fallback
     }
 }

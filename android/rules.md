@@ -31,7 +31,7 @@
 - Room uses **KSP**, not kapt.
 - Static analysis (get_errors) does **not** validate migration-vs-entity schema. Only a real build +
   first app launch does. Always hand-check the migration against the entity.
-- Current DB: `jax_room_db`, **version 6**, migrations 1→6.
+- Current DB: `jax_room_db`, **version 10**, migrations 1→10.
 
 ## AI / Gemini layer
 
@@ -87,4 +87,4 @@
 - Voice pipeline (SpeechRecognizer → transcript → Gemini → TTS): verify on device.
 - Calendar sync, 9 AM briefing scheduling, Notion-style notes UX, conversational slot filling:
   behavior not fully proven; inspect before changing.
-- Memory is keyword/category matching, not semantic embeddings (future upgrade).
+- Memory uses keyword/category matching plus best-effort cached embeddings; FTS4 remains open.

@@ -17,7 +17,7 @@ Architecture
 
 Fact Save / Retrieve
    ↓
-MemoryEngine (keyword + category match — NOT semantic yet)
+MemoryEngine + embedding cache (keyword/category + best-effort semantic retrieval)
 
 Workspace
    Pages → Blocks (text/heading/bullet/checklist/code/quote/divider)
@@ -44,7 +44,7 @@ ui/screens/MemoryVaultScreen.kt, ui/screens/KnowledgeWorkspaceScreen.kt
 Current Status — 🟡 Built, verify on device
 
 Facts save/retrieve with typed life categories. Block editor with tags + search. Related-pages
-linking (chips + picker). DB at v6.
+linking (chips + picker). Hybrid retrieval uses lexical matching plus cached embeddings. DB at v10.
 
 ------------------------------------------------
 
@@ -57,7 +57,7 @@ Link two pages → each shows the other under "Related pages".
 
 Known Issues
 
-Memory is keyword/category matching, not embedding-based semantic retrieval.
+Embedding retrieval is best-effort and falls back to lexical matching when the API is unavailable.
 
 ------------------------------------------------
 

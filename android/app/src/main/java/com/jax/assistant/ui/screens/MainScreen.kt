@@ -120,9 +120,11 @@ fun MainScreen(
     onToggleConversationMode: () -> Unit = {},
     onNewChat: () -> Unit = {},
     onMicClick: () -> Unit,
+    voiceDraft: String = "",
     onSpeakBriefing: (String) -> Unit,
     onStopSpeaking: () -> Unit,
-    onRunBriefingNow: () -> Unit = {}
+    onRunBriefingNow: () -> Unit = {},
+    onClearAllData: () -> Unit = {}
     ,visionAnalysis: String = ""
     ,isAnalyzingImage: Boolean = false
     ,onChooseVisionImage: () -> Unit = {}
@@ -271,6 +273,7 @@ fun MainScreen(
                     messages = messages,
                     onSendMessage = onSendMessage,
                     onMicClick = onMicClick,
+                    voiceDraft = voiceDraft,
                     isListening = isListening,
                     conversationMode = conversationMode,
                     onToggleConversationMode = onToggleConversationMode,
@@ -420,4 +423,3 @@ fun MainScreenPreview() {
         )
     }
 }
-

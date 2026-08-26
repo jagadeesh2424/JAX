@@ -3,6 +3,7 @@ package com.jax.assistant.ai
 import com.jax.assistant.db.FactEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /**
@@ -13,8 +14,11 @@ class GeminiSmokeTest {
 
     @Test
     fun testGeminiProviderDirectSmokeTest() = runBlocking {
+        // This is an opt-in network smoke test. A fake key makes the SDK initialize
+        // unnecessarily on the JVM (and is not a meaningful connectivity check).
+        val apiKey = System.getenv("GEMINI_API_KEY") ?: ""
+        assumeTrue("Set GEMINI_API_KEY to run the live Gemini smoke test", apiKey.isNotBlank())
         val provider = GeminiProvider()
-        val apiKey = System.getenv("GEMINI_API_KEY") ?: "TEST_MOCK_KEY"
         val model = "gemini-2.0-flash"
         val prompt = "Hello"
 

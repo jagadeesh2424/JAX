@@ -22,8 +22,8 @@ Requirements: **Android Studio** (Giraffe+), **JDK 17**, an emulator or device (
 ```
 The APK lands in `app/build/outputs/apk/debug/`.
 
-> Note: the code is currently verified only by static analysis. The first real Gradle
-> build may surface issues static analysis can't see — that's expected and is step #1 in PLAN.md.
+> The debug APK has been verified with a real Gradle build on Java 21. Device testing
+> remains the next validation step.
 
 ---
 

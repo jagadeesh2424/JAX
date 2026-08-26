@@ -34,7 +34,7 @@ Memory & Knowledge
 
 🟡 Save Memory  (facts + typed life categories)
 
-🟡 Retrieve Memory  (keyword + category; NOT semantic yet)
+🟡 Retrieve Memory  (keyword + category + best-effort embeddings)
 
 🟡 Workspace  (Notion-style block editor: pages/blocks/tags/search)
 
@@ -80,7 +80,6 @@ Personal Operating System
 
 ⬜ Hilt DI  (deferred — ServiceLocator works; plugin/KSP wiring unverifiable without a build)
 ⬜ FTS4 notes search
-⬜ Firebase multi-device sync  (needs google-services.json)
-⬜ Semantic memory  (embeddings)
+🟡 Firebase multi-device sync  (Google Auth + user-scoped Firestore; device verification pending)
 
-Next action: Gradle clean build on Mac → verify DB v6 migration + all slices → device-test Phase 1.
+Next action: device-test Phase 1 and Firebase sync, then verify durable agent recovery and add FTS4 notes search.

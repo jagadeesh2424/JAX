@@ -3,6 +3,7 @@ package com.jax.assistant.ai
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.AgentRunEntity
 import com.jax.assistant.db.PageLinkEntity
+import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ai.agent.WorkflowLearner
 import com.jax.assistant.ai.agent.ContextAssembler
 import com.jax.assistant.ai.agent.AgentController
@@ -134,6 +135,27 @@ class AiLayerTest {
         )
 
         assertEquals(listOf("create_task -> search_tasks (observed 2 times)"), suggestions)
+    }
+
+    @Test
+    fun testAgentRunCarriesRecoverableState() {
+        val run = AgentRunEntity(
+            id = "run-1",
+            goal = "Create and organize tasks",
+            status = "RUNNING",
+            reply = "",
+            toolsUsed = "create_task",
+            startedAt = 1L,
+            finishedAt = 0L,
+            currentStep = 2,
+            maxSteps = 6,
+            recoveryState = "Executed create_task; awaiting verification"
+        )
+
+        assertEquals("RUNNING", run.status)
+        assertEquals(2, run.currentStep)
+        assertEquals(6, run.maxSteps)
+        assertTrue(run.recoveryState.contains("awaiting verification"))
     }
 
     @Test

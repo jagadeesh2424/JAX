@@ -84,6 +84,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isListening = MutableStateFlow<Boolean>(false)
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
 
+    private val _voiceDraft = MutableStateFlow("")
+    val voiceDraft: StateFlow<String> = _voiceDraft.asStateFlow()
+
     private val _isSpeaking = MutableStateFlow<Boolean>(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
@@ -231,6 +234,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _taskContextAwarenessEnabled.value = repository.isTaskContextAwarenessEnabled()
             _voiceResponsesEnabled.value = repository.isVoiceResponsesEnabled()
         }
+    }
+
+    fun setVoiceDraft(text: String) {
+        _voiceDraft.value = text
+    }
+
+    fun clearVoiceDraft() {
+        _voiceDraft.value = ""
     }
 
     private fun formatTime(ts: Long): String =

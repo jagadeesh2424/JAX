@@ -42,7 +42,7 @@ Feature repositories: Task · Memory · Notes · Goal · Project · Habit · Ai 
    ↓
 ServiceLocator (manual DI, lazy singletons — Hilt deferred)
    ↓
-Room (jax_room_db, v6, migrations 1→6)
+Room (jax_room_db, v10, migrations 1→10)
 
 AI path:
 MainViewModel → AiRepository → AIService → GeminiBrain
@@ -54,6 +54,6 @@ Background: WorkManager — DailyAgentWorker (9 AM) · WeeklyReviewWorker (Sun 6
 Voice: VoiceManager — SpeechRecognizer (STT) + TextToSpeech (TTS) + hands-free loop
 Device: DeviceCommandParser → DeviceController (Android intents)
 Config: config/AppConfig.kt (single place for tunables)
-Firebase: planned, not wired.
+Firebase: Google Auth + user-scoped Firestore mirror.
 
-Note: compile-clean via static analysis; NOT yet Gradle-built/device-tested. Mac is source of truth.
+Note: Android debug Gradle build is clean on Java 21; device behavior is not yet verified.

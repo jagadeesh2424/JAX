@@ -3,6 +3,7 @@ package com.jax.assistant.ai.agent
 import org.json.JSONObject
 
 data class AgentResult(val reply: String, val toolsUsed: List<String>)
+data class AgentCheckpoint(val step: Int, val state: String, val toolsUsed: List<String>)
 
 // The controlled reasoning loop: plan -> call tool -> observe/verify -> repeat -> final.
 // Drives the model through the existing text `generate` (AIRouter stays the brain), so the
@@ -14,12 +15,19 @@ class AgentOrchestrator(
     private val maxSteps: Int = 6
 ) {
 
-    suspend fun run(userInput: String, model: String, contextText: String, sink: AgentEventSink): AgentResult {
+    suspend fun run(
+        userInput: String,
+        model: String,
+        contextText: String,
+        sink: AgentEventSink,
+        onCheckpoint: suspend (AgentCheckpoint) -> Unit = {}
+    ): AgentResult {
         sink.emit(AgentEvent("user_input", userInput))
         val toolsUsed = mutableListOf<String>()
         val transcript = StringBuilder()
 
-        repeat(maxSteps) {
+        repeat(maxSteps) { step ->
+            onCheckpoint(AgentCheckpoint(step + 1, "Requesting model decision", toolsUsed.toList()))
             val prompt = buildPrompt(userInput, contextText, transcript.toString())
 
             val raw = try {
@@ -63,6 +71,13 @@ class AgentOrchestrator(
                     }
                     transcript.append("\nTOOL $toolName -> $obs")
                     sink.emit(AgentEvent("tool_result", obs))
+                    onCheckpoint(
+                        AgentCheckpoint(
+                            step = step + 1,
+                            state = "Executed $toolName; awaiting verification",
+                            toolsUsed = toolsUsed.toList()
+                        )
+                    )
                 }
                 else -> {
                     val reply = json.optString("reply").ifBlank { "Done, Jagadeesh." }

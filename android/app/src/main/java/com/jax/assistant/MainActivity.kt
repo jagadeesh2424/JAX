@@ -20,6 +20,7 @@ import com.jax.assistant.ui.MainViewModel
 import com.jax.assistant.ui.screens.MainScreen
 import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.voice.VoiceManager
+import com.jax.assistant.voice.GeminiLiveVoiceProvider
 import com.jax.assistant.worker.DailyAgentWorker
 import com.jax.assistant.worker.ConsolidationWorker
 import com.jax.assistant.worker.WeeklyReviewWorker
@@ -29,12 +30,14 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private lateinit var voiceManager: VoiceManager
+    private lateinit var liveVoiceProvider: GeminiLiveVoiceProvider
     private val deviceController by lazy { DeviceController(applicationContext) }
 
     private val requestMicPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                voiceManager.startListening()
+                if (viewModel.conversationMode.value) liveVoiceProvider.start()
+                else voiceManager.startListening()
             } else {
                 Toast.makeText(
                     this,
@@ -84,6 +87,7 @@ class MainActivity : ComponentActivity() {
                 val dailyPlan by viewModel.dailyPlan.collectAsState()
                 val isPlanning by viewModel.isPlanning.collectAsState()
                 val isListening by viewModel.isListening.collectAsState()
+                val voiceDraft by viewModel.voiceDraft.collectAsState()
                 val conversationMode by viewModel.conversationMode.collectAsState()
                 val focusBlockId by viewModel.focusBlockId.collectAsState()
                 val visionAnalysis by viewModel.visionAnalysis.collectAsState()
@@ -105,8 +109,12 @@ class MainActivity : ComponentActivity() {
                     VoiceManager(
                         context = this@MainActivity,
                         onSpeechResult = { text ->
+                            viewModel.clearVoiceDraft()
                             val clean = VoiceManager.stripWakePhrase(text)
                             handleUserInput(clean)
+                        },
+                        onPartialSpeechResult = { text ->
+                            viewModel.setVoiceDraft(text)
                         },
                         onError = { message ->
                             viewModel.setListening(false)
@@ -120,8 +128,21 @@ class MainActivity : ComponentActivity() {
                         onSpeakingStateChanged = { speaking ->
                             viewModel.setSpeaking(speaking)
                             // Hands-free: once J.A.X. finishes speaking, re-open the mic for the next turn.
-                            if (!speaking && viewModel.conversationMode.value) {
+                            if (!speaking && viewModel.conversationMode.value && !liveVoiceProvider.isActive()) {
                                 runOnUiThread { startVoiceInput() }
+                            }
+                        }
+                    )
+                }
+                if (!::liveVoiceProvider.isInitialized) {
+                    liveVoiceProvider = GeminiLiveVoiceProvider(
+                        onInputTranscript = { text -> viewModel.setVoiceDraft("You: $text") },
+                        onOutputTranscript = { text -> viewModel.setVoiceDraft("J.A.X.: $text") },
+                        onActiveChanged = { active -> viewModel.setListening(active) },
+                        onError = { message ->
+                            viewModel.setListening(false)
+                            runOnUiThread {
+                                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                             }
                         }
                     )
@@ -229,11 +250,15 @@ class MainActivity : ComponentActivity() {
                     onDeleteHabit = { viewModel.deleteHabit(it) },
                     initialTab = startTab,
                     isListening = isListening,
+                    voiceDraft = voiceDraft,
                     conversationMode = conversationMode,
                     onToggleConversationMode = {
                         val enabling = !viewModel.conversationMode.value
                         viewModel.setConversationMode(enabling)
-                        if (enabling) startVoiceInput() else voiceManager.stopListening()
+                        if (enabling) startVoiceInput() else {
+                            liveVoiceProvider.stop()
+                            voiceManager.stopListening()
+                        }
                     },
                     onMicClick = {
                         handleMicClick()
@@ -276,7 +301,8 @@ class MainActivity : ComponentActivity() {
     private fun handleMicClick() {
         // Tapping the mic while listening stops it; otherwise start a voice turn.
         if (viewModel.isListening.value) {
-            voiceManager.stopListening()
+            if (viewModel.conversationMode.value) liveVoiceProvider.stop()
+            else voiceManager.stopListening()
             return
         }
         startVoiceInput()
@@ -288,7 +314,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
         if (granted) {
-            voiceManager.startListening()
+            if (viewModel.conversationMode.value) liveVoiceProvider.start()
+            else voiceManager.startListening()
         } else {
             requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
@@ -382,6 +409,9 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         if (::voiceManager.isInitialized) {
             voiceManager.shutdown()
+        }
+        if (::liveVoiceProvider.isInitialized) {
+            liveVoiceProvider.shutdown()
         }
     }
 }

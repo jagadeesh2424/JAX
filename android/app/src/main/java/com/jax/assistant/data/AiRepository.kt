@@ -11,6 +11,7 @@ import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TaskCapability
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.VisionService
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
 import kotlinx.coroutines.flow.StateFlow

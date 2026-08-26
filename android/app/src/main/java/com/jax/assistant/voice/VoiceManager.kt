@@ -13,6 +13,7 @@ import java.util.Locale
 class VoiceManager(
     private val context: Context,
     private val onSpeechResult: (String) -> Unit,
+    private val onPartialSpeechResult: (String) -> Unit = {},
     private val onError: (String) -> Unit = {},
     private val onListeningStateChanged: (Boolean) -> Unit = {},
     private val onSpeakingStateChanged: (Boolean) -> Unit = {}
@@ -41,7 +42,10 @@ class VoiceManager(
                         onListeningStateChanged(false)
                         onError(describeError(error))
                     }
-                    override fun onPartialResults(partialResults: Bundle?) {}
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        matches?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(onPartialSpeechResult)
+                    }
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                 })
             }
@@ -68,9 +72,13 @@ class VoiceManager(
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.US.toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, com.jax.assistant.config.AppConfig.VOICE_LANGUAGE)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, com.jax.assistant.config.AppConfig.VOICE_LANGUAGE)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, com.jax.assistant.config.AppConfig.VOICE_MAX_RESULTS)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
         }
+        recognizer.cancel()
         recognizer.startListening(intent)
     }
 

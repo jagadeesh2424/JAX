@@ -18,3 +18,4 @@ class WorkflowLearner {
         .take(limit)
         .map { "${it.key} (observed ${it.value} times)" }
         .toList()
+}

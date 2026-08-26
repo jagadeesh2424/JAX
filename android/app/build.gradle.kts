@@ -40,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
@@ -48,6 +49,9 @@ android {
         resources {
             excludes += "/META-INDEX"
         }
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -87,8 +91,16 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // Firebase (BoM manages versions) + Google Sign-In
-    implementation(platform("com.google.firebase:firebase-bom:34.18.0"))
+    // Keep Firebase on the Kotlin 1.9-compatible line used by this project.
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-auth")
+    // Firebase AI Logic Live API (Gemini Developer API backend).
+    // Kept explicit because this project currently uses Kotlin 1.9.x.
+    implementation("com.google.firebase:firebase-ai:17.16.0")
+    implementation("com.google.firebase:firebase-appcheck-debug:19.4.1")
     implementation("com.google.android.gms:play-services-auth:21.2.0")
+
+    // JVM unit tests
+    testImplementation("junit:junit:4.13.2")
 }

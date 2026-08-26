@@ -20,8 +20,8 @@ This file tracks **what is built, what is deferred, and the order of remaining w
 | 6 | Personal OS (app launcher + device commands) | ✅ Done |
 | + | Knowledge-graph edges (page↔page links) | ✅ Done |
 
-> ⚠️ **All phases are compile-clean via static analysis, but NOT yet Gradle-built.**
-> A real `./gradlew assembleDebug` pass is the single most valuable next step (see below).
+> ✅ **Android debug APK builds with Gradle 8.5, Java 21, and Kotlin 1.9.22.**
+> Device validation and Firebase sync testing remain pending.
 
 ---
 
@@ -64,13 +64,14 @@ This file tracks **what is built, what is deferred, and the order of remaining w
 
 Ordered by value ÷ risk. Items marked **(needs build)** should wait until a Gradle build works.
 
-1. **Gradle build pass** — run `./gradlew assembleDebug`, fix anything static analysis can't catch. *Foundational.*
-2. **FTS4 notes search** — replace LIKE search with Room FTS4 for speed/ranking. Self-contained, schema change.
+1. ~~**Gradle build pass** — run `./gradlew assembleDebug`, fix anything static analysis can't catch.~~ ✅ Done. *Foundational.*
+2. **Durable agent recovery** *(implemented; needs device interruption test)* — running status, step checkpoints, recovery state, and Room v10 migration.
+3. **FTS4 notes search** — replace LIKE search with Room FTS4 for speed/ranking. Self-contained, schema change.
 3. ~~**Knowledge-graph edges** — link notes to each other; show related items.~~ ✅ Done (page↔page links).
 4. **Hilt DI migration** *(deferred)* — would replace the working `ServiceLocator`. No demonstrated problem, and the Gradle plugin + KSP wiring can't be verified without a real build. Revisit only if manual DI becomes painful.
 5. **Porcupine wake word** *(needs build + SDK key)* — always-on background wake word via a foreground service.
 6. **Notification intelligence** — `NotificationListenerService` to summarize/act on incoming notifications (special grant).
-7. **Firebase multi-device sync** *(needs config)* — `google-services.json` + Firestore mirror of Room data.
+7. **Firebase multi-device sync** *(implemented; needs device verification)* — Google Auth + user-scoped Firestore mirror.
 8. ~~**ML preference learning**~~ — grounded version ✅ Done: **Insights** panel on the Executive Dashboard aggregates existing tasks/goals/habits (completion %, overdue, busiest area, goal progress, habit streaks). True embedding-based learning is still future.
 
 ---

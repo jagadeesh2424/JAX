@@ -13,5 +13,9 @@ data class AgentRunEntity(
     val reply: String,
     val toolsUsed: String,
     val startedAt: Long,
-    val finishedAt: Long
+    val finishedAt: Long,
+    val plan: String = "",
+    val currentStep: Int = 0,
+    val maxSteps: Int = 6,
+    val recoveryState: String = ""
 )

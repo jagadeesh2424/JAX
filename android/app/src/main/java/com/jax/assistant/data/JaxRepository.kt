@@ -158,6 +158,24 @@ class JaxRepository(context: Context) {
         facts: List<FactEntity> = emptyList(),
         conversationSummary: String = ""
     ): String {
+        // Keep ordinary conversation on the single-turn brain path. The tool loop is
+        // reserved for requests that actually need planning or persistence, reducing
+        // latency and avoiding unnecessary multi-request agent failures.
+        if (!requiresAgent(input)) {
+            return when (val parsed = aiRepo.processUserInput(input, getSelectedModel(), facts, conversationSummary)) {
+                is JaxParseResult.QuestionResult -> parsed.reply
+                is JaxParseResult.TaskResult -> {
+                    taskRepo.insertTask(parsed.task)
+                    parsed.reply
+                }
+                is JaxParseResult.FactResult -> {
+                    memoryRepo.insertFact(parsed.fact)
+                    parsed.reply
+                }
+                is JaxParseResult.CompleteTaskResult -> parsed.reply
+            }
+        }
+
         val openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
         val relevant = selectRelevantFactsHybrid(input, facts)
         val learnedWorkflows = agentRunRepo.learnedWorkflows()
@@ -173,11 +191,35 @@ class JaxRepository(context: Context) {
         val runId = java.util.UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
         val sink = InMemoryEventSink()
-        val result = agent.run(input, getSelectedModel(), context.text, sink)
+        agentRunRepo.startRun(runId, input, maxSteps = 6, startedAt = startedAt)
+        val result = agent.run(
+            input,
+            getSelectedModel(),
+            context.text,
+            sink
+        ) { checkpoint ->
+            agentRunRepo.checkpoint(
+                runId = runId,
+                step = checkpoint.step,
+                state = checkpoint.state,
+                toolsUsed = checkpoint.toolsUsed
+            )
+        }
         val events = sink.snapshot()
         val status = if (events.any { it.type == "error" }) "COMPLETED_WITH_ERRORS" else "COMPLETED"
-        agentRunRepo.saveRun(runId, input, status, result.reply, result.toolsUsed, startedAt, System.currentTimeMillis(), events)
+        agentRunRepo.finishRun(runId, status, result.reply, result.toolsUsed)
+        agentRunRepo.saveEvents(runId, events)
         return result.reply
+    }
+
+    private fun requiresAgent(input: String): Boolean {
+        val lower = input.lowercase()
+        return listOf(
+            "create", "add", "make", "remind", "schedule", "set ", "complete", "finish",
+            "delete", "remove", "cancel", "search my", "find my", "organize my", "open ",
+            "launch ", "call ", "dial ", "navigate", "link", "save this", "remember this",
+            "update my profile"
+        ).any(lower::contains)
     }
 
     // Hybrid memory retrieval: semantic (embeddings) + lexical (keyword), best-effort.
