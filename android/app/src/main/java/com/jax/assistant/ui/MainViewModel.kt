@@ -360,13 +360,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun googleSignInIntent(): Intent = authRepository.signInIntent()
 
-    fun completeGoogleSignIn(data: Intent?) {
+    fun completeGoogleSignIn(data: Intent?, onSuccess: () -> Unit = {}) {
         _isSyncing.value = true
         authRepository.completeSignIn(data) { result ->
             viewModelScope.launch {
                 result.onSuccess { email ->
                     _signedInEmail.value = email
                     syncNow()
+                    onSuccess()
                 }.onFailure { error ->
                     _syncStatus.value = "Sign-in failed: ${error.localizedMessage ?: "unknown error"}"
                     _isSyncing.value = false
@@ -374,6 +375,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    fun isFirebaseUserSignedIn(): Boolean = authRepository.isSignedIn
 
     fun syncNow() {
         val uid = authRepository.currentUid

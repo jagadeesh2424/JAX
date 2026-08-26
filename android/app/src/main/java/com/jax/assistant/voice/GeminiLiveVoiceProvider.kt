@@ -2,6 +2,7 @@ package com.jax.assistant.voice
 
 import android.annotation.SuppressLint
 import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.AudioTranscriptionConfig
 import com.google.firebase.ai.type.FunctionCallPart
@@ -49,6 +50,11 @@ class GeminiLiveVoiceProvider(
 
     override fun start() {
         if (!stopped) return
+        if (FirebaseAuth.getInstance().currentUser == null) {
+            onError("Sign in with Google before starting Gemini Live voice.")
+            onActiveChanged(false)
+            return
+        }
         stopped = false
         scope.launch {
             try {

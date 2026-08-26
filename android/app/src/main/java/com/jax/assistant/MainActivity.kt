@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private lateinit var voiceManager: VoiceManager
     private lateinit var liveVoiceProvider: GeminiLiveVoiceProvider
+    private var pendingLiveStartAfterSignIn = false
     private val deviceController by lazy { DeviceController(applicationContext) }
 
     private val requestMicPermission =
@@ -49,7 +50,13 @@ class MainActivity : ComponentActivity() {
 
     private val googleSignInLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            viewModel.completeGoogleSignIn(result.data)
+            viewModel.completeGoogleSignIn(result.data) {
+                if (pendingLiveStartAfterSignIn) {
+                    pendingLiveStartAfterSignIn = false
+                    viewModel.setConversationMode(true)
+                    startVoiceInput()
+                }
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -254,8 +261,19 @@ class MainActivity : ComponentActivity() {
                     conversationMode = conversationMode,
                     onToggleConversationMode = {
                         val enabling = !viewModel.conversationMode.value
-                        viewModel.setConversationMode(enabling)
-                        if (enabling) startVoiceInput() else {
+                        if (enabling && !viewModel.isFirebaseUserSignedIn()) {
+                            pendingLiveStartAfterSignIn = true
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Sign in with Google to start Gemini Live voice.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            googleSignInLauncher.launch(viewModel.googleSignInIntent())
+                        } else if (enabling) {
+                            viewModel.setConversationMode(true)
+                            startVoiceInput()
+                        } else {
+                            viewModel.setConversationMode(false)
                             liveVoiceProvider.stop()
                             voiceManager.stopListening()
                         }
@@ -309,6 +327,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVoiceInput() {
+        if (viewModel.conversationMode.value && !viewModel.isFirebaseUserSignedIn()) {
+            pendingLiveStartAfterSignIn = true
+            Toast.makeText(
+                this,
+                "Sign in with Google to start Gemini Live voice.",
+                Toast.LENGTH_LONG
+            ).show()
+            googleSignInLauncher.launch(viewModel.googleSignInIntent())
+            return
+        }
         val granted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.RECORD_AUDIO
