@@ -9,7 +9,7 @@ import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.agent.AgentController
 import com.jax.assistant.ai.agent.AgentOrchestrator
 import com.jax.assistant.ai.agent.ContextAssembler
-import com.jax.assistant.ai.agent.InMemoryEventSink
+import com.jax.assistant.ai.agent.DurableEventSink
 import com.jax.assistant.ai.agent.ToolRegistry
 import com.jax.assistant.ai.agent.tools.CompleteTaskTool
 import com.jax.assistant.ai.agent.tools.CreateTaskTool
@@ -103,6 +103,10 @@ class JaxRepository(context: Context) {
 
     fun setVoiceResponsesEnabled(enabled: Boolean) = prefs.setVoiceResponsesEnabled(enabled)
 
+    fun getProactiveAutonomyLevel(): com.jax.assistant.ai.agent.AutonomyLevel = prefs.getProactiveAutonomyLevel()
+
+    fun setProactiveAutonomyLevel(level: com.jax.assistant.ai.agent.AutonomyLevel) = prefs.setProactiveAutonomyLevel(level)
+
     fun getUserProfile(): String = prefs.getUserProfile()
 
     fun saveUserProfile(profile: String) = prefs.saveUserProfile(profile)
@@ -156,7 +160,9 @@ class JaxRepository(context: Context) {
     suspend fun runAgent(
         input: String,
         facts: List<FactEntity> = emptyList(),
-        conversationSummary: String = ""
+        conversationSummary: String = "",
+        // Consulted for SENSITIVE/DESTRUCTIVE tool calls; default approves for non-interactive callers.
+        confirm: suspend (com.jax.assistant.ai.agent.ToolConfirmation) -> Boolean = { true }
     ): String {
         // Keep ordinary conversation on the single-turn brain path. The tool loop is
         // reserved for requests that actually need planning or persistence, reducing
@@ -187,30 +193,37 @@ class JaxRepository(context: Context) {
             userProfile = prefs.getUserProfile(),
             learnedWorkflows = learnedWorkflows
         )
-        // Durable run: capture this turn's events and persist the run + events to Room.
+        // Durable run: persist the run and flush its events to Room as they happen so a
+        // process death mid-run still leaves a complete, auditable trail.
         val runId = java.util.UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()
-        val sink = InMemoryEventSink()
+        val sink = DurableEventSink()
         agentRunRepo.startRun(runId, input, maxSteps = 6, startedAt = startedAt)
         val result = agent.run(
             input,
             getSelectedModel(),
             context.text,
-            sink
-        ) { checkpoint ->
-            agentRunRepo.checkpoint(
-                runId = runId,
-                step = checkpoint.step,
-                state = checkpoint.state,
-                toolsUsed = checkpoint.toolsUsed
-            )
-        }
-        val events = sink.snapshot()
-        val status = if (events.any { it.type == "error" }) "COMPLETED_WITH_ERRORS" else "COMPLETED"
+            sink,
+            onCheckpoint = { checkpoint ->
+                agentRunRepo.checkpoint(
+                    runId = runId,
+                    step = checkpoint.step,
+                    state = checkpoint.state,
+                    toolsUsed = checkpoint.toolsUsed
+                )
+                agentRunRepo.saveEvents(runId, sink.drainPending())
+            },
+            confirm = confirm
+        )
+        agentRunRepo.saveEvents(runId, sink.drainPending())
+        val status = if (sink.snapshot().any { it.type == "error" }) "COMPLETED_WITH_ERRORS" else "COMPLETED"
         agentRunRepo.finishRun(runId, status, result.reply, result.toolsUsed)
-        agentRunRepo.saveEvents(runId, events)
         return result.reply
     }
+
+    // Crash recovery: reconcile agent runs left RUNNING by a previous process death.
+    // Safe to call once at app startup; returns the number of runs reconciled.
+    suspend fun reconcileInterruptedAgentRuns(): Int = agentRunRepo.reconcileInterruptedRuns()
 
     private fun requiresAgent(input: String): Boolean {
         val lower = input.lowercase()
@@ -222,12 +235,15 @@ class JaxRepository(context: Context) {
         ).any(lower::contains)
     }
 
-    // Hybrid memory retrieval: semantic (embeddings) + lexical (keyword), best-effort.
+    // Hybrid memory retrieval: semantic (embeddings) + lexical (keyword), fused with
+    // Reciprocal Rank Fusion so a fact strong in both signals outranks one strong in only one.
     // Embeddings backfill a few facts per turn, so semantic recall warms up over the first messages.
     private suspend fun selectRelevantFactsHybrid(query: String, facts: List<FactEntity>): List<FactEntity> {
         if (facts.isEmpty()) return emptyList()
-        val lexical = MemoryEngine().selectRelevantMemories(query, facts)
-        val queryVec = aiRepo.embed(query) ?: return lexical
+        val engine = MemoryEngine()
+        val lexicalRanked = engine.scoreMemories(query, facts).map { it.first }
+        val queryVec = aiRepo.embed(query)
+            ?: return lexicalRanked.take(6).ifEmpty { engine.selectRelevantMemories(query, facts) }
         val vectors = factEmbeddingRepo.getAll().toMutableMap()
         var backfilled = 0
         for (f in facts) {
@@ -240,16 +256,13 @@ class JaxRepository(context: Context) {
                 }
             }
         }
-        val semantic = facts
+        val semanticRanked = facts
             .mapNotNull { f -> vectors[f.id]?.let { f to VectorUtils.cosine(queryVec, it) } }
             .filter { it.second > 0.3f }
             .sortedByDescending { it.second }
-            .take(5)
             .map { it.first }
-        val merged = LinkedHashSet<FactEntity>()
-        semantic.forEach { merged.add(it) }
-        lexical.forEach { merged.add(it) }
-        return merged.take(6).toList()
+        val fused = engine.fuseByReciprocalRank(listOf(semanticRanked, lexicalRanked)).take(6)
+        return fused.ifEmpty { engine.selectRelevantMemories(query, facts) }
     }
 
     suspend fun getChatHistory(): List<ChatMessageEntity> = chatRepo.getHistory()

@@ -3,6 +3,7 @@ package com.jax.assistant.ai.agent.tools
 import com.jax.assistant.ai.agent.JaxTool
 import com.jax.assistant.ai.agent.ToolParam
 import com.jax.assistant.ai.agent.ToolResult
+import com.jax.assistant.ai.agent.ToolRisk
 import com.jax.assistant.data.TaskRepository
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,6 +42,7 @@ class SearchTasksTool(private val tasks: TaskRepository) : JaxTool {
         ToolParam("query", "string", "Optional keyword to filter task titles")
     )
     override val isDestructive = false
+    override val risk = ToolRisk.READ
 
     override suspend fun execute(args: JSONObject): ToolResult {
         val query = args.optString("query", "").trim().lowercase()

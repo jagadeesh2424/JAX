@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.jax.assistant"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.jax.assistant"
@@ -91,12 +91,12 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // Firebase (BoM manages versions) + Google Sign-In
-    // Keep Firebase on the Kotlin 1.9-compatible line used by this project.
-    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    // firebase-ai 17.16.0 requires BoM 34.0.0+; upgraded from 33.7.0.
+    implementation(platform("com.google.firebase:firebase-bom:34.0.0"))
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-auth")
     // Firebase AI Logic Live API (Gemini Developer API backend).
-    // Kept explicit because this project currently uses Kotlin 1.9.x.
+    // Pinned for stability; BoM 34.0.0 manages transitive versions.
     implementation("com.google.firebase:firebase-ai:17.16.0")
     implementation("com.google.firebase:firebase-appcheck-debug:19.4.1")
     implementation("com.google.android.gms:play-services-auth:21.2.0")

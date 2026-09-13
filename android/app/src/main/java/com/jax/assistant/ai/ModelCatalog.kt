@@ -87,12 +87,15 @@ object ModelCatalog {
     fun calculatePriority(cleanId: String, displayName: String): Int {
         val idLower = cleanId.lowercase()
         return when {
+            // Prefer latest Gemini 3.x models (fastest, cheapest)
             idLower == "gemini-3.6-flash" || idLower == "gemini-3.6-flash-preview" -> 1
             idLower == "gemini-3.5-flash" || idLower == "gemini-3.5-flash-preview" -> 2
             idLower == "gemini-3.1-flash-lite" || idLower == "gemini-3.1-flash-lite-preview" -> 3
             idLower == "gemini-3-flash" || idLower == "gemini-3.0-flash" -> 4
+            // Then 2.5 and 2.0 models
             idLower == "gemini-2.5-flash" || idLower == "gemini-2.5-flash-lite" -> 5
             idLower == "gemini-2.0-flash" || idLower == "gemini-2.0-flash-exp" -> 6
+            // Pro models (reasoning, slower)
             idLower.contains("3.6") && idLower.contains("flash") -> 1
             idLower.contains("3.5") && idLower.contains("flash") -> 2
             idLower.contains("3.1") && idLower.contains("flash") -> 3

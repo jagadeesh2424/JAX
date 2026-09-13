@@ -2,6 +2,7 @@ package com.jax.assistant.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.config.AppConfig
 
 // Owns all persisted user settings (API key, selected model, developer mode).
@@ -53,6 +54,16 @@ class UserPreferencesRepository(context: Context) {
 
     fun setVoiceResponsesEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("voice_responses_enabled", enabled).apply()
+    }
+
+    // Proactivity autonomy ladder (Priority #5). Defaults to NOTIFY, matching the existing
+    // notify-only briefing behaviour. Stored as the enum name for forward compatibility.
+    fun getProactiveAutonomyLevel(): AutonomyLevel =
+        runCatching { AutonomyLevel.valueOf(prefs.getString("proactive_autonomy_level", null) ?: "") }
+            .getOrDefault(AutonomyLevel.NOTIFY)
+
+    fun setProactiveAutonomyLevel(level: AutonomyLevel) {
+        prefs.edit().putString("proactive_autonomy_level", level.name).apply()
     }
 
     fun clearAll() {

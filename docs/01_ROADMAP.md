@@ -76,10 +76,31 @@ Personal Operating System
 
 -------------------------
 
+# Phase 5
+
+Agent Reliability & Autonomy (2026-08-31 → 2026-09-01)
+
+🟡 Durable Agent Execution  (event persistence + crash reconciliation + duplicate-tool guard + retry)
+
+🟡 Strong Memory Retrieval  (whole-word lexical scoring + Reciprocal Rank Fusion of semantic/lexical)
+
+🟡 Tool & Permission System  (ToolRisk taxonomy + ALLOW/CONFIRM/DENY gate + confirm dialog + MCP JSON schema)
+
+🟡 Agent Planning & Recovery  (explicit plan step, re-plan directive after repeated tool failures)
+
+🟡 Proactive Autonomy Ladder  (OFF/NOTIFY/RECOMMEND/ASK/ACT suggestion levels; UI wiring pending)
+
+🟡 Gemini Live Reliability  (connection-state lifecycle + exponential-backoff reconnect)
+
+All six items are static-analysis clean (VS Code diagnostics + new unit tests in `AiLayerTest.kt`) but
+**not yet Gradle-built or device-tested**. See `android/PLAN.md` Phase 7 for detail and the device test checklist.
+
+-------------------------
+
 # Deferred / needs external setup
 
 ⬜ Hilt DI  (deferred — ServiceLocator works; plugin/KSP wiring unverifiable without a build)
-⬜ FTS4 notes search
+⬜ FTS4 notes search  (whole-word lexical scoring is the interim lexical half, see Phase 5)
 🟡 Firebase multi-device sync  (Google Auth + user-scoped Firestore; device verification pending)
 
-Next action: device-test Phase 1 and Firebase sync, then verify durable agent recovery and add FTS4 notes search.
+Next action: Gradle-build + device-test Phase 5 (agent reliability/autonomy), Phase 1 conversational core, and Firebase sync; then add FTS4 notes search and the proactive-autonomy Settings UI.

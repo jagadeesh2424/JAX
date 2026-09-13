@@ -53,6 +53,24 @@ class AgentRunRepository(private val dao: AgentRunDao) {
 
     suspend fun recoverableRuns(): List<AgentRunEntity> = dao.recoverableRuns()
 
+    // Crash recovery: runs left in RUNNING by a process death are orphaned. Mark them
+    // INTERRUPTED so they stop being "in progress" forever while staying auditable.
+    suspend fun reconcileInterruptedRuns(): Int {
+        val orphans = dao.recoverableRuns()
+        orphans.forEach { run ->
+            dao.updateProgress(
+                runId = run.id,
+                status = "INTERRUPTED",
+                reply = run.reply,
+                toolsUsed = run.toolsUsed,
+                currentStep = run.currentStep,
+                recoveryState = "Interrupted at step ${run.currentStep} by app stop; ${run.recoveryState}".take(300),
+                finishedAt = System.currentTimeMillis()
+            )
+        }
+        return orphans.size
+    }
+
     suspend fun finishRun(
         runId: String,
         status: String,

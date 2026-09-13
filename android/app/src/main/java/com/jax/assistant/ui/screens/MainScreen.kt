@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.agent.ToolConfirmation
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.GoalEntity
 import com.jax.assistant.db.HabitEntity
@@ -128,6 +129,8 @@ fun MainScreen(
     ,visionAnalysis: String = ""
     ,isAnalyzingImage: Boolean = false
     ,onChooseVisionImage: () -> Unit = {}
+    ,pendingConfirmation: ToolConfirmation? = null
+    ,onResolveConfirmation: (Boolean) -> Unit = {}
 ) {
     var activeTab by remember { mutableStateOf(initialTab) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings, 6: Notes, 7: Executive Dashboard
     var showDevConsole by remember { mutableStateOf(false) }
@@ -385,6 +388,17 @@ fun MainScreen(
                 )
             }
         }
+    }
+
+    // Permission gate: a sensitive/destructive tool call awaits explicit user consent.
+    pendingConfirmation?.let { request ->
+        AlertDialog(
+            onDismissRequest = { onResolveConfirmation(false) },
+            title = { Text("Confirm ${request.risk.name.lowercase().replace('_', ' ')} action") },
+            text = { Text("J.A.X. wants to run \"${request.toolName}\": ${request.description}") },
+            confirmButton = { TextButton(onClick = { onResolveConfirmation(true) }) { Text("Allow") } },
+            dismissButton = { TextButton(onClick = { onResolveConfirmation(false) }) { Text("Deny") } }
+        )
     }
 }
 }

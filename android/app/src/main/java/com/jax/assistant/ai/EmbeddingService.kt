@@ -1,19 +1,46 @@
 package com.jax.assistant.ai
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 // Generates text embeddings via Gemini text-embedding-004 (REST). Best-effort: returns null
 // on missing key / network error so callers fall back to lexical search.
 class EmbeddingService(private val apiKeyProvider: () -> String) {
+    private val requestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlight = ConcurrentHashMap<String, Deferred<FloatArray?>>()
 
-    suspend fun embed(text: String): FloatArray? = withContext(Dispatchers.IO) {
+    suspend fun embed(text: String): FloatArray? {
         val key = apiKeyProvider().trim()
-        if (key.isBlank() || text.isBlank()) return@withContext null
+        val normalizedText = text.trim()
+        if (key.isBlank() || normalizedText.isBlank()) return null
+
+        val requestKey = "$key\u0000$normalizedText"
+        val candidate = requestScope.async(start = CoroutineStart.LAZY) {
+            requestEmbedding(key, normalizedText)
+        }
+        val existing = inFlight.putIfAbsent(requestKey, candidate)
+        if (existing != null) {
+            candidate.cancel()
+            return existing.await()
+        }
+
+        candidate.invokeOnCompletion {
+            inFlight.remove(requestKey, candidate)
+        }
+        return candidate.await()
+    }
+
+    private suspend fun requestEmbedding(key: String, text: String): FloatArray? = withContext(Dispatchers.IO) {
         try {
             val url = URL("$ENDPOINT?key=$key")
             val conn = (url.openConnection() as HttpURLConnection).apply {

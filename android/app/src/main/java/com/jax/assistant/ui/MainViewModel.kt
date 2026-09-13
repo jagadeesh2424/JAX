@@ -9,6 +9,7 @@ import com.jax.assistant.ai.JaxParseResult
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.agent.ToolConfirmation
 import com.jax.assistant.config.AppConfig
 import com.jax.assistant.data.JaxRepository
 import com.jax.assistant.data.ServiceLocator
@@ -22,6 +23,7 @@ import com.jax.assistant.db.NotePageEntity
 import com.jax.assistant.db.ProjectEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.screens.ComposeChatMessage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +44,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     val messages: StateFlow<List<ComposeChatMessage>> = _messages.asStateFlow()
+
+    // A sensitive/destructive tool call awaiting the user's approval, surfaced to the UI.
+    // The agent loop suspends on `pendingApproval` until resolveToolConfirmation() is called.
+    private val _pendingConfirmation = MutableStateFlow<ToolConfirmation?>(null)
+    val pendingConfirmation: StateFlow<ToolConfirmation?> = _pendingConfirmation.asStateFlow()
+    private var pendingApproval: CompletableDeferred<Boolean>? = null
 
     private val _tasks = MutableStateFlow<List<TaskEntity>>(emptyList())
     val tasks: StateFlow<List<TaskEntity>> = _tasks.asStateFlow()
@@ -66,6 +74,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _voiceResponsesEnabled = MutableStateFlow(repository.isVoiceResponsesEnabled())
     val voiceResponsesEnabled: StateFlow<Boolean> = _voiceResponsesEnabled.asStateFlow()
+
+    private val _proactiveAutonomyLevel = MutableStateFlow(repository.getProactiveAutonomyLevel())
+    val proactiveAutonomyLevel: StateFlow<com.jax.assistant.ai.agent.AutonomyLevel> = _proactiveAutonomyLevel.asStateFlow()
 
     private val _signedInEmail = MutableStateFlow(authRepository.currentEmail)
     val signedInEmail: StateFlow<String?> = _signedInEmail.asStateFlow()
@@ -136,6 +147,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isAnalyzingImage: StateFlow<Boolean> = _isAnalyzingImage.asStateFlow()
 
     init {
+        // Crash recovery: reconcile agent runs interrupted by a previous process death.
+        viewModelScope.launch {
+            repository.reconcileInterruptedAgentRuns()
+        }
         // Load persisted chat history (Phase 2 durable state).
         viewModelScope.launch {
             val history = repository.getChatHistory()
@@ -260,16 +275,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                val reply = repository.runAgent(input, _facts.value, conversationSummary)
+                val reply = repository.runAgent(input, _facts.value, conversationSummary) { request ->
+                    // Suspend the agent loop until the user answers the confirmation dialog.
+                    val deferred = CompletableDeferred<Boolean>()
+                    pendingApproval = deferred
+                    _pendingConfirmation.value = request
+                    val approved = deferred.await()
+                    _pendingConfirmation.value = null
+                    pendingApproval = null
+                    approved
+                }
                 pushMessage(ComposeChatMessage(System.currentTimeMillis().toString(), reply, false, "Now"))
                 onSpeak?.invoke(reply)
             } catch (e: Exception) {
                 val errorMsg = "System Error: ${e.localizedMessage ?: "Failed to process message"}"
                 pushMessage(ComposeChatMessage(System.currentTimeMillis().toString(), errorMsg, false, "Now"))
             } finally {
+                _pendingConfirmation.value = null
+                pendingApproval = null
                 _isProcessing.value = false
             }
         }
+    }
+
+    // Called from the confirmation dialog to approve/deny a pending sensitive tool call.
+    fun resolveToolConfirmation(approved: Boolean) {
+        pendingApproval?.complete(approved)
     }
 
     fun toggleTask(task: TaskEntity) {
@@ -358,6 +389,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _voiceResponsesEnabled.value = enabled
     }
 
+    fun setProactiveAutonomyLevel(level: com.jax.assistant.ai.agent.AutonomyLevel) {
+        repository.setProactiveAutonomyLevel(level)
+        _proactiveAutonomyLevel.value = level
+    }
+
     fun googleSignInIntent(): Intent = authRepository.signInIntent()
 
     fun completeGoogleSignIn(data: Intent?, onSuccess: () -> Unit = {}) {
@@ -397,6 +433,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signOut() {
+        firebaseSync.cancelPending()
         authRepository.signOut {
             _signedInEmail.value = null
             _syncStatus.value = "Signed out. Local data remains on this device."
@@ -612,5 +649,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isAnalyzingImage.value = false
             }
         }
+    }
+
+    // Clean up coroutine jobs on ViewModel destruction to prevent leaks on config change
+    override fun onCleared() {
+        super.onCleared()
+        blocksJob?.cancel()
+        relatedJob?.cancel()
+        noteSearchJob?.cancel()
     }
 }

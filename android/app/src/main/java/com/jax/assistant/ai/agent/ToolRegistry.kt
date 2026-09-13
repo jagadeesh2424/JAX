@@ -1,5 +1,7 @@
 package com.jax.assistant.ai.agent
 
+import org.json.JSONArray
+
 // Holds all available tools and renders their catalog for the planner prompt (S4 seam).
 // A future McpProvider can register remote tools into this same registry with no loop changes.
 class ToolRegistry(tools: List<JaxTool>) {
@@ -16,5 +18,11 @@ class ToolRegistry(tools: List<JaxTool>) {
             "${p.name} (${p.type}${if (p.required) ", required" else ""}): ${p.description}"
         }
         "- ${tool.name}: ${tool.description} | args: [$params]"
+    }
+
+    // MCP tools/list-shaped catalog: an array of {name, description, risk, inputSchema}.
+    // Lets a native function-calling or MCP transport advertise these tools unchanged.
+    fun toolsJsonSchema(): JSONArray = JSONArray().apply {
+        byName.values.forEach { put(it.toJsonSchema()) }
     }
 }

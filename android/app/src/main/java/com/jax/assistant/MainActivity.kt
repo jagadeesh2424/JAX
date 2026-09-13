@@ -37,8 +37,12 @@ class MainActivity : ComponentActivity() {
     private val requestMicPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                if (viewModel.conversationMode.value) liveVoiceProvider.start()
-                else voiceManager.startListening()
+                // Use Gemini Live only if conversation mode AND user is signed in.
+                if (viewModel.conversationMode.value && viewModel.isFirebaseUserSignedIn()) {
+                    liveVoiceProvider.start()
+                } else {
+                    voiceManager.startListening()
+                }
             } else {
                 Toast.makeText(
                     this,
@@ -99,6 +103,7 @@ class MainActivity : ComponentActivity() {
                 val focusBlockId by viewModel.focusBlockId.collectAsState()
                 val visionAnalysis by viewModel.visionAnalysis.collectAsState()
                 val isAnalyzingImage by viewModel.isAnalyzingImage.collectAsState()
+                val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
                 val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
                     uri?.let { viewModel.analyzeImage(it) }
                 }
@@ -261,15 +266,7 @@ class MainActivity : ComponentActivity() {
                     conversationMode = conversationMode,
                     onToggleConversationMode = {
                         val enabling = !viewModel.conversationMode.value
-                        if (enabling && !viewModel.isFirebaseUserSignedIn()) {
-                            pendingLiveStartAfterSignIn = true
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Sign in with Google to start Gemini Live voice.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            googleSignInLauncher.launch(viewModel.googleSignInIntent())
-                        } else if (enabling) {
+                        if (enabling) {
                             viewModel.setConversationMode(true)
                             startVoiceInput()
                         } else {
@@ -296,7 +293,9 @@ class MainActivity : ComponentActivity() {
                     onClearAllData = { viewModel.clearAllLocalData() },
                     visionAnalysis = visionAnalysis,
                     isAnalyzingImage = isAnalyzingImage,
-                    onChooseVisionImage = { imagePicker.launch("image/*") }
+                    onChooseVisionImage = { imagePicker.launch("image/*") },
+                    pendingConfirmation = pendingConfirmation,
+                    onResolveConfirmation = { approved -> viewModel.resolveToolConfirmation(approved) }
                 )
             }
         }
@@ -327,25 +326,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startVoiceInput() {
-        if (viewModel.conversationMode.value && !viewModel.isFirebaseUserSignedIn()) {
-            pendingLiveStartAfterSignIn = true
-            Toast.makeText(
-                this,
-                "Sign in with Google to start Gemini Live voice.",
-                Toast.LENGTH_LONG
-            ).show()
-            googleSignInLauncher.launch(viewModel.googleSignInIntent())
-            return
-        }
         val granted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
         if (granted) {
-            if (viewModel.conversationMode.value) liveVoiceProvider.start()
-            else voiceManager.startListening()
+            // Use Gemini Live only if conversation mode is enabled AND user is signed in.
+            // Otherwise fall back to local STT/TTS.
+            if (viewModel.conversationMode.value && viewModel.isFirebaseUserSignedIn()) {
+                liveVoiceProvider.start()
+            } else {
+                voiceManager.startListening()
+            }
         } else {
             requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
         }
     }
 

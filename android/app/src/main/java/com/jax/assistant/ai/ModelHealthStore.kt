@@ -11,7 +11,8 @@ class ModelHealthStore(context: Context) {
     fun isDiscoveryExpired(): Boolean {
         val lastTimestamp = prefs.getLong("discovery_timestamp_ms", 0L)
         val now = System.currentTimeMillis()
-        return (now - lastTimestamp) > 86_400_000L // 24 hours
+        // Extend cache to 7 days (was 24 hours); discovery runs less frequently
+        return (now - lastTimestamp) > 604_800_000L // 7 days = 604,800,000 ms
     }
 
     fun markDiscoveryUpdated() {

@@ -23,3 +23,27 @@ class InMemoryEventSink(private val max: Int = 100) : AgentEventSink {
 
     fun snapshot(): List<AgentEvent> = events.toList()
 }
+
+// Durable sink: keeps a full snapshot (for end-of-run consolidation) and exposes
+// incremental draining so tool calls/results are flushed to Room as the run
+// progresses, surviving a process death mid-run (Priority 1: durable execution).
+class DurableEventSink : AgentEventSink {
+    private val all = ArrayDeque<AgentEvent>()
+    private val pending = ArrayDeque<AgentEvent>()
+
+    @Synchronized
+    override fun emit(event: AgentEvent) {
+        all.addLast(event)
+        pending.addLast(event)
+    }
+
+    @Synchronized
+    fun drainPending(): List<AgentEvent> {
+        val out = pending.toList()
+        pending.clear()
+        return out
+    }
+
+    @Synchronized
+    fun snapshot(): List<AgentEvent> = all.toList()
+}

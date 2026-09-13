@@ -11,9 +11,11 @@ object ServiceLocator {
 
     private lateinit var appContext: Context
 
+    @Synchronized
     fun init(context: Context) {
         if (!::appContext.isInitialized) {
             appContext = context.applicationContext
+            FirebaseSyncManager.schedulePeriodic(appContext)
         }
     }
 
@@ -33,7 +35,7 @@ object ServiceLocator {
     val auth: AuthRepository by lazy {
         AuthRepository(appContext, appContext.getString(com.jax.assistant.R.string.jax_web_client_id))
     }
-    val firebaseSync: FirebaseSyncManager by lazy { FirebaseSyncManager(database) }
+    val firebaseSync: FirebaseSyncManager by lazy { FirebaseSyncManager(database, appContext) }
 
     suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
         database.clearAllTables()
