@@ -1,8 +1,28 @@
+# Node
 node_modules/
+
+# Build outputs
 build/
 dist/
 coverage/
+**/.gradle/
+
+# Gradle
+.gradle/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Android local configuration
+local.properties
+
+# macOS
 .DS_Store
+
+# Logs
 *.log
+
+# Environment / secrets
 .env*
 !.env.example
