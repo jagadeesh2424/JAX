@@ -70,13 +70,13 @@ class GeminiProvider : AIProvider {
                         responseMimeType = "application/json"
                         temperature = 0.7f  // Natural, conversational responses
                         topP = 0.95f        // Nucleus sampling for diversity
-                        topK = 40f          // Top-k sampling
+                        topK = 40           // Top-k sampling
                     }
                 } else {
                     generationConfig {
                         temperature = 0.7f  // Natural, conversational
                         topP = 0.95f
-                        topK = 40f
+                        topK = 40
                     }
                 }
             )

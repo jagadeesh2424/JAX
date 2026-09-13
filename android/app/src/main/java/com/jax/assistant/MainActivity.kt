@@ -341,7 +341,6 @@ class MainActivity : ComponentActivity() {
         } else {
             requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
-        }
     }
 
     private fun scheduleDailyBriefingWorker() {

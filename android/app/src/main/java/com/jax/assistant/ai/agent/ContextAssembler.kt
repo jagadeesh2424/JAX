@@ -63,12 +63,14 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         currentDate: String
     ): AssembledContext {
         val facts = if (relevantFacts.isEmpty()) "None" else boundedLines(
-            relevantFacts.take(3),  // Top 3 facts only
+            relevantFacts.take(3).map { "- [${it.category}] ${it.title}: ${it.details}" },
             FACTS_BUDGET_FAST
         )
 
         val tasks = if (openTasks.isEmpty()) "None" else boundedLines(
-            openTasks.take(3),  // Top 3 tasks only
+            openTasks.take(3).map {
+                "- (${it.id}) [${it.priority}] ${it.title}" + (it.deadline?.let { d -> " due $d" } ?: "")
+            },
             TASKS_BUDGET_FAST
         )
 

@@ -92,7 +92,7 @@ dependencies {
 
     // Firebase (BoM manages versions) + Google Sign-In
     // firebase-ai 17.16.0 requires BoM 34.0.0+; upgraded from 33.7.0.
-    implementation(platform("com.google.firebase:firebase-bom:34.0.0"))
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-auth")
     // Firebase AI Logic Live API (Gemini Developer API backend).

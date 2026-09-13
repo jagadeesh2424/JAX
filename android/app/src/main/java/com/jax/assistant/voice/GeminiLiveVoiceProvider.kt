@@ -121,7 +121,7 @@ class GeminiLiveVoiceProvider(
                     }
                 },
                 { goAway ->
-                    android.util.Log.d(TAG, "Server closed session: ${goAway.reason}")
+                    android.util.Log.d(TAG, "Server closed session: $goAway")
                     connectionState = ConnectionState.DISCONNECTED
                     reconnectAfterGoAway()
                 },
