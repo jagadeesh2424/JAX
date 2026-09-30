@@ -8,8 +8,10 @@ import com.jax.assistant.ai.VectorUtils
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.agent.AgentController
 import com.jax.assistant.ai.agent.AgentOrchestrator
+import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.ai.agent.ContextAssembler
 import com.jax.assistant.ai.agent.DurableEventSink
+import com.jax.assistant.ai.agent.ToolConfirmation
 import com.jax.assistant.ai.agent.ToolRegistry
 import com.jax.assistant.ai.agent.tools.CompleteTaskTool
 import com.jax.assistant.ai.agent.tools.CreateTaskTool
@@ -32,8 +34,10 @@ import com.jax.assistant.db.GoalEntity
 import com.jax.assistant.db.HabitEntity
 import com.jax.assistant.db.ProjectEntity
 import com.jax.assistant.db.TaskEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.UUID
 
 // Facade that delegates to focused domain repositories provided by ServiceLocator.
 class JaxRepository(context: Context) {
@@ -72,7 +76,8 @@ class JaxRepository(context: Context) {
         AgentOrchestrator(
             registry = registry,
             controller = AgentController(),
-            generate = { prompt, model -> aiRepo.generateAgent(prompt, model) }
+            generate = { prompt, model -> aiRepo.generateAgent(prompt, model) },
+            maxSteps = AGENT_MAX_STEPS
         )
     }
 
@@ -103,9 +108,9 @@ class JaxRepository(context: Context) {
 
     fun setVoiceResponsesEnabled(enabled: Boolean) = prefs.setVoiceResponsesEnabled(enabled)
 
-    fun getProactiveAutonomyLevel(): com.jax.assistant.ai.agent.AutonomyLevel = prefs.getProactiveAutonomyLevel()
+    fun getProactiveAutonomyLevel(): AutonomyLevel = prefs.getProactiveAutonomyLevel()
 
-    fun setProactiveAutonomyLevel(level: com.jax.assistant.ai.agent.AutonomyLevel) = prefs.setProactiveAutonomyLevel(level)
+    fun setProactiveAutonomyLevel(level: AutonomyLevel) = prefs.setProactiveAutonomyLevel(level)
 
     fun getUserProfile(): String = prefs.getUserProfile()
 
@@ -155,18 +160,15 @@ class JaxRepository(context: Context) {
     ): JaxParseResult =
         aiRepo.processUserInput(input, getSelectedModel(), factsList, conversationSummary)
 
-    // Phase 1: run the tool-using agent loop for a chat turn. Tools persist their own
-    // changes; returns J.A.X.'s final reply.
+    // Runs one chat turn. Plain conversation takes the single-call brain path; requests that
+    // need tools go through the durable agent loop. Returns J.A.X.'s final reply.
     suspend fun runAgent(
         input: String,
         facts: List<FactEntity> = emptyList(),
         conversationSummary: String = "",
         // Consulted for SENSITIVE/DESTRUCTIVE tool calls; default approves for non-interactive callers.
-        confirm: suspend (com.jax.assistant.ai.agent.ToolConfirmation) -> Boolean = { true }
+        confirm: suspend (ToolConfirmation) -> Boolean = { true }
     ): String {
-        // Keep ordinary conversation on the single-turn brain path. The tool loop is
-        // reserved for requests that actually need planning or persistence, reducing
-        // latency and avoiding unnecessary multi-request agent failures.
         if (!requiresAgent(input)) {
             return when (val parsed = aiRepo.processUserInput(input, getSelectedModel(), facts, conversationSummary)) {
                 is JaxParseResult.QuestionResult -> parsed.reply
@@ -178,47 +180,68 @@ class JaxRepository(context: Context) {
                     memoryRepo.insertFact(parsed.fact)
                     parsed.reply
                 }
-                is JaxParseResult.CompleteTaskResult -> parsed.reply
+                is JaxParseResult.CompleteTaskResult -> completeTaskByReference(parsed.reference, parsed.reply)
             }
         }
 
         val openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
-        val relevant = selectRelevantFactsHybrid(input, facts)
-        val learnedWorkflows = agentRunRepo.learnedWorkflows()
         val context = ContextAssembler().build(
-            relevantFacts = relevant,
+            relevantFacts = selectRelevantFactsHybrid(input, facts),
             openTasks = openTasks,
             conversationSummary = conversationSummary,
             currentDate = java.time.LocalDate.now().toString(),
             userProfile = prefs.getUserProfile(),
-            learnedWorkflows = learnedWorkflows
+            learnedWorkflows = agentRunRepo.learnedWorkflows()
         )
-        // Durable run: persist the run and flush its events to Room as they happen so a
-        // process death mid-run still leaves a complete, auditable trail.
-        val runId = java.util.UUID.randomUUID().toString()
-        val startedAt = System.currentTimeMillis()
+        // Durable run: events are flushed to Room as they happen, so a process death mid-run
+        // still leaves an auditable trail that reconcileInterruptedRuns() can close out.
+        val runId = UUID.randomUUID().toString()
         val sink = DurableEventSink()
-        agentRunRepo.startRun(runId, input, maxSteps = 6, startedAt = startedAt)
-        val result = agent.run(
-            input,
-            getSelectedModel(),
-            context.text,
-            sink,
-            onCheckpoint = { checkpoint ->
-                agentRunRepo.checkpoint(
-                    runId = runId,
-                    step = checkpoint.step,
-                    state = checkpoint.state,
-                    toolsUsed = checkpoint.toolsUsed
-                )
-                agentRunRepo.saveEvents(runId, sink.drainPending())
-            },
-            confirm = confirm
-        )
-        agentRunRepo.saveEvents(runId, sink.drainPending())
-        val status = if (sink.snapshot().any { it.type == "error" }) "COMPLETED_WITH_ERRORS" else "COMPLETED"
-        agentRunRepo.finishRun(runId, status, result.reply, result.toolsUsed)
-        return result.reply
+        agentRunRepo.startRun(runId, input, maxSteps = AGENT_MAX_STEPS)
+        try {
+            val result = agent.run(
+                input,
+                getSelectedModel(),
+                context.text,
+                sink,
+                onCheckpoint = { checkpoint ->
+                    agentRunRepo.checkpoint(runId, checkpoint.step, checkpoint.state, checkpoint.toolsUsed)
+                    agentRunRepo.saveEvents(runId, sink.drainPending())
+                },
+                confirm = confirm
+            )
+            agentRunRepo.saveEvents(runId, sink.drainPending())
+            val status = if (sink.snapshot().any { it.type == "error" }) STATUS_COMPLETED_WITH_ERRORS else STATUS_COMPLETED
+            agentRunRepo.finishRun(runId, status, result.reply, result.toolsUsed)
+            return result.reply
+        } catch (e: CancellationException) {
+            // Leave the run RUNNING; startup reconciliation marks it INTERRUPTED.
+            throw e
+        } catch (e: Exception) {
+            agentRunRepo.saveEvents(runId, sink.drainPending())
+            agentRunRepo.finishRun(runId, STATUS_FAILED, e.message.orEmpty(), emptyList())
+            throw e
+        }
+    }
+
+    // Resolves "mark X done" from the single-call brain against open tasks. Only acts on an
+    // unambiguous match; otherwise asks the user to be more specific.
+    private suspend fun completeTaskByReference(reference: String, modelReply: String): String {
+        val words = reference.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length > 2 }
+        if (words.isEmpty()) return "Which task should I mark as done?"
+        val open = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
+        val scored = open
+            .map { task -> task to words.count { task.title.lowercase().contains(it) } }
+            .filter { it.second > 0 }
+        val best = scored.maxOfOrNull { it.second } ?: return "I couldn't find an open task matching \"$reference\"."
+        val matches = scored.filter { it.second == best }.map { it.first }
+        if (matches.size > 1) {
+            return "I found ${matches.size} matching tasks: " +
+                matches.take(3).joinToString(", ") { "\"${it.title}\"" } + ". Which one did you mean?"
+        }
+        val task = matches.single()
+        taskRepo.updateTask(task.copy(isCompleted = true))
+        return modelReply.ifBlank { "Marked \"${task.title}\" as done." }
     }
 
     // Crash recovery: reconcile agent runs left RUNNING by a previous process death.
@@ -227,12 +250,7 @@ class JaxRepository(context: Context) {
 
     private fun requiresAgent(input: String): Boolean {
         val lower = input.lowercase()
-        return listOf(
-            "create", "add", "make", "remind", "schedule", "set ", "complete", "finish",
-            "delete", "remove", "cancel", "search my", "find my", "organize my", "open ",
-            "launch ", "call ", "dial ", "navigate", "link", "save this", "remember this",
-            "update my profile"
-        ).any(lower::contains)
+        return AGENT_VERBS.containsMatchIn(lower) || AGENT_PHRASES.any(lower::contains)
     }
 
     // Hybrid memory retrieval: semantic (embeddings) + lexical (keyword), fused with
@@ -245,9 +263,12 @@ class JaxRepository(context: Context) {
         val queryVec = aiRepo.embed(query)
             ?: return lexicalRanked.take(6).ifEmpty { engine.selectRelevantMemories(query, facts) }
         val vectors = factEmbeddingRepo.getAll().toMutableMap()
+        // Backfill at most one missing vector per turn. Four sequential embedding calls
+        // made agent requests feel stalled on slower networks; lexical ranking remains the
+        // fallback when the best-effort embedding request is unavailable.
         var backfilled = 0
         for (f in facts) {
-            if (!vectors.containsKey(f.id) && backfilled < 4) {
+            if (!vectors.containsKey(f.id) && backfilled < 1) {
                 val v = aiRepo.embed("${f.title}. ${f.details}")
                 if (v != null) {
                     factEmbeddingRepo.save(f.id, v)
@@ -309,4 +330,18 @@ class JaxRepository(context: Context) {
 
     suspend fun generateDailyPlan(openTasks: List<TaskEntity>, currentDate: String): String =
         aiRepo.generateDailyPlan(getSelectedModel(), openTasks, currentDate)
+
+    private companion object {
+        const val AGENT_MAX_STEPS = 6
+        const val STATUS_COMPLETED = "COMPLETED"
+        const val STATUS_COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS"
+        const val STATUS_FAILED = "FAILED"
+
+        // Whole-word action verbs, so e.g. "address" no longer matches "add".
+        val AGENT_VERBS = Regex(
+            "\\b(create|add|make|remind|schedule|set|complete|finish|delete|remove|cancel|" +
+                "open|launch|call|dial|navigate|link)\\b"
+        )
+        val AGENT_PHRASES = listOf("search my", "find my", "organize my", "save this", "remember this", "update my profile")
+    }
 }

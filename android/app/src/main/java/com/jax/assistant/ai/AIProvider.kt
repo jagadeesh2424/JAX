@@ -1,10 +1,7 @@
 package com.jax.assistant.ai
 
 import android.util.Log
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.InvalidAPIKeyException
-import com.google.ai.client.generativeai.type.QuotaExceededException
-import com.google.ai.client.generativeai.type.generationConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -37,7 +34,7 @@ class GeminiProvider : AIProvider {
     override val providerName: String = "Gemini"
 
     companion object {
-        const val SDK_VERSION = "com.google.ai.client.generativeai:0.9.0"
+        const val SDK_VERSION = "Gemini REST API"
         const val REST_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta"
         const val API_VERSION = "v1beta"
     }
@@ -57,64 +54,11 @@ class GeminiProvider : AIProvider {
 
         val cleanModelId = modelId.removePrefix("models/").trim()
 
-        // First attempt via GenerativeModel SDK
-        var sdkResult: ProviderRawResult? = null
-        var sdkException: Exception? = null
-
-        try {
-            val model = GenerativeModel(
-                modelName = cleanModelId,
-                apiKey = keyToUse,
-                generationConfig = if (requireJson) {
-                    generationConfig {
-                        responseMimeType = "application/json"
-                        temperature = 0.7f  // Natural, conversational responses
-                        topP = 0.95f        // Nucleus sampling for diversity
-                        topK = 40f          // Top-k sampling
-                    }
-                } else {
-                    generationConfig {
-                        temperature = 0.7f  // Natural, conversational
-                        topP = 0.95f
-                        topK = 40f
-                    }
-                }
-            )
-
-            val response = model.generateContent(prompt)
-            val text = response.text
-            if (!text.isNullOrBlank()) {
-                val res = ProviderRawResult(
-                    isSuccess = true,
-                    text = text,
-                    httpStatus = 200
-                )
-                printDiagnostics(cleanModelId, keyToUse, res, null)
-                return res
-            } else {
-                sdkResult = ProviderRawResult(
-                    isSuccess = false,
-                    httpStatus = 200,
-                    errorCode = "EMPTY_RESPONSE",
-                    errorMessage = "Empty response received from model $cleanModelId."
-                )
-            }
-        } catch (e: Exception) {
-            sdkException = e
-            sdkResult = parseException(e, cleanModelId)
-        }
-
-        // If SDK returned success, return it
-        if (sdkResult?.isSuccess == true) {
-            printDiagnostics(cleanModelId, keyToUse, sdkResult, sdkException)
-            return sdkResult
-        }
-
-        // Fallback: If model is known real (e.g. gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro) or if SDK failed, run Direct REST API request
-        val directRestResult = executeDirectRest(prompt, cleanModelId, keyToUse, requireJson)
-        printDiagnostics(cleanModelId, keyToUse, directRestResult, sdkException ?: directRestResult.rawException)
-
-        return if (directRestResult.isSuccess) directRestResult else (sdkResult ?: directRestResult)
+        // Use the REST API directly. The legacy Gemini SDK uses Ktor 2.x, which conflicts
+        // with Firebase AI Live's Ktor 3.x dependency and can crash class loading at startup.
+        val restResult = executeDirectRest(prompt, cleanModelId, keyToUse, requireJson)
+        printDiagnostics(cleanModelId, keyToUse, restResult, restResult.rawException)
+        return restResult
     }
 
     override suspend fun testConnection(modelId: String, apiKey: String): TestConnectionResult {
@@ -287,14 +231,6 @@ class GeminiProvider : AIProvider {
             }
         }
 
-        if (e is InvalidAPIKeyException) {
-            httpStatus = 401
-            errorCode = "INVALID_API_KEY"
-        } else if (e is QuotaExceededException) {
-            httpStatus = 429
-            errorCode = "QUOTA_EXCEEDED"
-        }
-
         val extractedMsg = jsonErrorMessage ?: e.localizedMessage ?: e.message ?: "Unknown error"
 
         return ProviderRawResult(
@@ -334,7 +270,5 @@ class GeminiProvider : AIProvider {
         """.trimIndent()
 
         Log.d(TAG, logOutput)
-        println(logOutput)
     }
 }
-

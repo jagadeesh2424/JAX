@@ -1,5 +1,7 @@
 package com.jax.assistant.ai.agent
 
+import com.jax.assistant.ai.AIException
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 
 data class AgentResult(val reply: String, val toolsUsed: List<String>)
@@ -51,9 +53,13 @@ class AgentOrchestrator(
 
             val raw = try {
                 generate(prompt, model)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 sink.emit(AgentEvent("error", e.message ?: "generate failed"))
-                return AgentResult("J.A.X. Notice: ${e.message ?: "AI request failed."}", toolsUsed)
+                val reply = (e as? AIException)?.error?.userFriendlyMessage
+                    ?: "J.A.X. Notice: ${e.message ?: "AI request failed."}"
+                return AgentResult(reply, toolsUsed)
             }
 
             val json = parseJson(raw) ?: return AgentResult(fallbackReply(raw), toolsUsed)
@@ -172,6 +178,8 @@ class AgentOrchestrator(
         repeat(maxAttempts) { attempt ->
             try {
                 return tool.execute(args)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 lastError = e.message ?: "tool threw an exception"
                 sink.emit(AgentEvent("retry", "${tool.name} attempt ${attempt + 1} failed: $lastError"))

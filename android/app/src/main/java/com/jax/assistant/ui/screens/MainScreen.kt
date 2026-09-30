@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.ai.agent.ToolConfirmation
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.GoalEntity
@@ -70,6 +71,8 @@ fun MainScreen(
     onToggleTaskContextAwareness: (Boolean) -> Unit = {},
     voiceResponsesEnabled: Boolean = true,
     onToggleVoiceResponses: (Boolean) -> Unit = {},
+    proactiveAutonomyLevel: AutonomyLevel = AutonomyLevel.NOTIFY,
+    onChangeProactiveAutonomyLevel: (AutonomyLevel) -> Unit = {},
     signedInEmail: String? = null,
     syncStatus: String = "",
     isSyncing: Boolean = false,
@@ -116,6 +119,7 @@ fun MainScreen(
     onToggleHabit: (HabitEntity) -> Unit = {},
     onDeleteHabit: (HabitEntity) -> Unit = {},
     initialTab: Int = 0,
+    isProcessing: Boolean = false,
     isListening: Boolean = false,
     conversationMode: Boolean = false,
     onToggleConversationMode: () -> Unit = {},
@@ -277,6 +281,7 @@ fun MainScreen(
                     onSendMessage = onSendMessage,
                     onMicClick = onMicClick,
                     voiceDraft = voiceDraft,
+                    isProcessing = isProcessing,
                     isListening = isListening,
                     conversationMode = conversationMode,
                     onToggleConversationMode = onToggleConversationMode,
@@ -372,6 +377,8 @@ fun MainScreen(
                     onToggleTaskContextAwareness = onToggleTaskContextAwareness,
                     voiceResponsesEnabled = voiceResponsesEnabled,
                     onToggleVoiceResponses = onToggleVoiceResponses,
+                    proactiveAutonomyLevel = proactiveAutonomyLevel,
+                    onChangeProactiveAutonomyLevel = onChangeProactiveAutonomyLevel,
                     signedInEmail = signedInEmail,
                     syncStatus = syncStatus,
                     isSyncing = isSyncing,

@@ -20,6 +20,7 @@ This file tracks **what is built, what is deferred, and the order of remaining w
 | 6 | Personal OS (app launcher + device commands) | ✅ Done |
 | + | Knowledge-graph edges (page↔page links) | ✅ Done |
 | 7 | Agent Reliability & Autonomy (durable exec, memory fusion, permissions, planning, proactivity, Live reliability) | 🟡 Static clean, needs device test |
+| 8 | Stability review: build blockers, crash fixes, 3-way sync, DB v11 | 🟡 Needs Gradle build + device test |
 
 > ✅ **Android debug APK builds with Gradle 8.5, Java 21, and Kotlin 1.9.22.**
 > Device validation and Firebase sync testing remain pending.
@@ -72,6 +73,15 @@ Six-priority hardening pass over the agent loop, memory, and voice reliability. 
 Tests added throughout `AiLayerTest.kt` for each item above (duplicate-tool skip, retry, RRF fusion, whole-word scoring, confirm/decline/allow flows, MCP schema export, plan-then-execute, fallback-after-failure, replan-directive, autonomy levels, Live provider start/stop).
 
 **⚠️ Not yet validated:** everything in Phase 7 is static-analysis clean (VS Code diagnostics) only. It has **not** been built with Gradle or run on a device/emulator. Run `./gradlew assembleDebug test` and exercise: a normal chat tool call, a SENSITIVE tool (e.g. "navigate to ...") to see the confirm dialog, a DESTRUCTIVE tool (e.g. delete a task) to see it blocked on decline, and a multi-step request to see planning in the chat's underlying event log (Developer Console → agent runs).
+
+**Phase 8 — Stability review (2026-09-29)** — full-codebase audit after on-device crashes. **DB v10 → v11.**
+- *Build blockers fixed:* stray `}` in `MainActivity.startVoiceInput()` closed the class early; `topK = 40f` (SDK expects `Int`) in `AIProvider`; `ContextAssembler.buildFast()` passed entities where strings were expected.
+- *Crashes fixed:* duplicate chat `LazyColumn` keys (ids were millisecond timestamps + a fixed greeting id) → UUID ids + monotonic timestamps; Room schema-hash mismatch on `fact_embeddings` (redundant index added without a version bump) → removed index + `MIGRATION_10_11` + `fallbackToDestructiveMigrationOnDowngrade`; `ConcurrentModificationException` in `AIRouter` (health check vs. discovery) → copy-on-write list + discovery mutex; voice objects accessed before `setContent` composed (activity-result callbacks after process restart) → created in `onCreate`; any uncaught ViewModel error → `launchSafely` + toast notice.
+- *Data bugs fixed:* Firebase sync only uploaded *new* records, then `restore` overwrote local edits with stale cloud copies → rewritten as a per-record three-way merge (local / remote / last-synced fingerprint) that propagates edits **and deletions** both ways; Memory Vault search replaced the facts the agent saw; "mark X done" replied without completing anything; agent runs that threw stayed RUNNING forever (now FAILED); notes saved on every keystroke with a stale block copy (now debounced, column-level updates).
+- *Reliability:* `CancellationException` no longer swallowed (agent loop, provider, brain, ViewModel); chat turns serialized so a pending confirmation can't be orphaned; Gemini Live failures now reset to a restartable state, retry up to 5× with backoff that resets on success, and marshal SDK callbacks to the main thread; `POST_NOTIFICATIONS` requested on Android 13+.
+- *Features finished:* Proactivity selector in Settings (Off / Notify / Recommend) now drives the daily briefing; chat auto-scrolls and shows a "thinking" indicator; agent routing uses whole-word verbs ("address" no longer triggers "add").
+- *Tests:* real `org.json` on the unit-test classpath (Android stubs silently returned defaults); removed two JVM-unsafe Live tests; added backoff and fast-context tests; fixed a wrong suggestion-count assertion.
+- **Validate on device:** install **over the existing app** (exercises `MIGRATION_10_11` + first three-way sync), then: chat several quick messages + "New Chat" (key crash), edit a task on device A and sync to B, delete a task and sync, Developer Console health check while chatting, rotate during a voice turn, toggle Proactivity and "Run briefing now".
 
 ---
 

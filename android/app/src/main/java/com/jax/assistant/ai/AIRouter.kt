@@ -6,6 +6,10 @@ import com.jax.assistant.config.AppConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 private const val TAG = "AIRouter"
@@ -13,12 +17,16 @@ private const val TAG = "AIRouter"
 class AIRouter(context: Context? = null) {
 
     private val healthStore: ModelHealthStore? = context?.let { ModelHealthStore(it.applicationContext) }
-    private val providers = mutableMapOf<String, AIProvider>()
+    private val providers = ConcurrentHashMap<String, AIProvider>()
 
-    private val models = mutableListOf<ModelInfo>()
+    // Copy-on-write: health checks iterate this list across suspension points while
+    // discovery may replace its contents, so iteration must never see a concurrent change.
+    private val models = CopyOnWriteArrayList<ModelInfo>()
+    private val discoveryLock = Mutex()
     private val _requestLogs = MutableStateFlow<List<RequestLog>>(emptyList())
     val requestLogs: StateFlow<List<RequestLog>> = _requestLogs.asStateFlow()
 
+    @Volatile
     private var activeModel: String = AppConfig.DEFAULT_MODEL
 
     init {
@@ -40,34 +48,34 @@ class AIRouter(context: Context? = null) {
 
     suspend fun ensureModelDiscovery(apiKey: String, force: Boolean = false) {
         if (apiKey.isBlank()) return
-        val isExpired = healthStore?.isDiscoveryExpired() ?: true
-        if (force || isExpired || models.isEmpty()) {
-            val discovered = ModelCatalog.discoverModels(apiKey)
-            if (discovered.isNotEmpty()) {
-                val existingMap = models.associateBy { it.id }
-                models.clear()
-                for (disc in discovered) {
-                    val prev = existingMap[disc.id]
-                    if (prev != null) {
-                        disc.lastSuccess = prev.lastSuccess
-                        disc.lastFailure = prev.lastFailure
-                        disc.cooldownUntil = prev.cooldownUntil
-                        disc.failureCount = prev.failureCount
-                        disc.averageLatency = prev.averageLatency
-                        if (!prev.enabled) {
-                            disc.enabled = false
-                            disc.exclusionReason = prev.exclusionReason
-                        }
-                    }
-                    models.add(disc)
-                }
-                healthStore?.markDiscoveryUpdated()
-                healthStore?.saveModels(models)
+        discoveryLock.withLock {
+            val isExpired = healthStore?.isDiscoveryExpired() ?: true
+            if (!force && !isExpired && models.isNotEmpty()) return
 
-                val firstEnabled = models.firstOrNull { it.enabled }?.id
-                if (firstEnabled != null && !models.any { it.id == activeModel && it.enabled }) {
-                    activeModel = firstEnabled
+            val discovered = ModelCatalog.discoverModels(apiKey)
+            if (discovered.isEmpty()) return
+
+            val existingMap = models.associateBy { it.id }
+            for (disc in discovered) {
+                val prev = existingMap[disc.id] ?: continue
+                disc.lastSuccess = prev.lastSuccess
+                disc.lastFailure = prev.lastFailure
+                disc.cooldownUntil = prev.cooldownUntil
+                disc.failureCount = prev.failureCount
+                disc.averageLatency = prev.averageLatency
+                if (!prev.enabled) {
+                    disc.enabled = false
+                    disc.exclusionReason = prev.exclusionReason
                 }
+            }
+            models.clear()
+            models.addAll(discovered)
+            healthStore?.markDiscoveryUpdated()
+            healthStore?.saveModels(models)
+
+            val firstEnabled = models.firstOrNull { it.enabled }?.id
+            if (firstEnabled != null && models.none { it.id == activeModel && it.enabled }) {
+                activeModel = firstEnabled
             }
         }
     }
@@ -93,7 +101,10 @@ class AIRouter(context: Context? = null) {
         var isQuotaExceededOccurred = false
         var attemptCount = 0
 
-        for (candidate in candidateModels) {
+        // A transient failure should not make the user wait through every discovered model.
+        // Keep one fallback for a selected model and two for automatic routing.
+        val maxCandidates = if (requestedModel.isNotBlank()) 2 else 3
+        for (candidate in candidateModels.take(maxCandidates)) {
             val provider = providers[candidate.provider] ?: providers["Gemini"]
             if (provider == null) continue
 
@@ -250,12 +261,10 @@ class AIRouter(context: Context? = null) {
     }
 
     private fun logRequest(logEntry: RequestLog) {
-        val current = _requestLogs.value.toMutableList()
-        current.add(0, logEntry)
-        if (current.size > 30) {
-            _requestLogs.value = current.take(30)
-        } else {
-            _requestLogs.value = current
-        }
+        _requestLogs.update { current -> (listOf(logEntry) + current).take(MAX_REQUEST_LOGS) }
+    }
+
+    private companion object {
+        const val MAX_REQUEST_LOGS = 30
     }
 }

@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.google.android.gms.tasks.Task
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.jax.assistant.db.AppDatabase
 import com.jax.assistant.db.ChatMessageEntity
@@ -24,16 +25,45 @@ import com.jax.assistant.db.ProjectEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.worker.FirebaseSyncWorker
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 // Local-first Firebase mirror. Credentials, embeddings, and local agent audit records never leave the device.
-// Delta sync: only uploads changed records (WHERE createdAt/updatedAt > lastSyncTime), reducing write cost by ~90%.
+//
+// Sync is a three-way merge per record: local vs. remote vs. the content fingerprint both sides
+// agreed on at the last successful sync ("base"). That detects edits and deletions on either side
+// without needing updatedAt columns on every table:
+//   only local changed  -> push (upload or delete remote)
+//   only remote changed -> pull (write or delete local)
+//   both changed        -> the local device wins, unless it deleted a record the other side edited
 class FirebaseSyncManager(private val database: AppDatabase, context: Context) {
     private val appContext = context.applicationContext
     private val firestore = FirebaseFirestore.getInstance()
     private val prefs: SharedPreferences = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val collections: List<SyncCollection<*>> = listOf(
+        SyncCollection("tasks", { database.taskDao().getAllTasksList() }, { it.id }, this::taskMap, this::taskFrom,
+            { database.taskDao().insertTask(it) }, { database.taskDao().deleteTask(it) }),
+        SyncCollection("facts", { database.factDao().getAllFactsList() }, { it.id }, this::factMap, this::factFrom,
+            { database.factDao().insertFact(it) }, { database.factDao().deleteFact(it) }),
+        SyncCollection("note_pages", { database.noteDao().getAllPagesList() }, { it.id }, this::pageMap, this::pageFrom,
+            { database.noteDao().insertPage(it) }, { database.noteDao().deletePage(it) }),
+        SyncCollection("note_blocks", { database.noteDao().getAllBlocksList() }, { it.id }, this::blockMap, this::blockFrom,
+            { database.noteDao().insertBlock(it) }, { database.noteDao().deleteBlock(it) }),
+        SyncCollection("page_links", { database.noteDao().getAllPageLinksList() }, { it.id }, this::linkMap, this::linkFrom,
+            { database.noteDao().insertPageLink(it) }, { database.noteDao().deleteLinkBetween(it.fromPageId, it.toPageId) }),
+        SyncCollection("goals", { database.goalDao().getAllGoalsList() }, { it.id }, this::goalMap, this::goalFrom,
+            { database.goalDao().insertGoal(it) }, { database.goalDao().deleteGoal(it) }),
+        SyncCollection("projects", { database.projectDao().getAllProjectsList() }, { it.id }, this::projectMap, this::projectFrom,
+            { database.projectDao().insertProject(it) }, { database.projectDao().deleteProject(it) }),
+        SyncCollection("habits", { database.habitDao().getAllHabitsList() }, { it.id }, this::habitMap, this::habitFrom,
+            { database.habitDao().insertHabit(it) }, { database.habitDao().deleteHabit(it) }),
+        SyncCollection("chat_messages", { database.chatMessageDao().getAll() }, { it.id }, this::chatMap, this::chatFrom,
+            { database.chatMessageDao().insert(it) }, { database.chatMessageDao().delete(it.id) })
+    )
 
     fun sync(uid: String): String {
         require(uid.isNotBlank()) { "Sign in before syncing." }
@@ -44,14 +74,9 @@ class FirebaseSyncManager(private val database: AppDatabase, context: Context) {
 
     suspend fun flush(uid: String) {
         require(uid.isNotBlank()) { "Sign in before syncing." }
-        val syncStartedAt = System.currentTimeMillis()
-        val lastSyncTime = prefs.getLong(KEY_LAST_SYNC_TIMESTAMP, 0)
-        backup(uid, lastSyncTime)
-        restore(uid)
-        prefs.edit()
-            .putLong(KEY_LAST_SYNC_TIMESTAMP, syncStartedAt)
-            .remove(KEY_PENDING_UID)
-            .apply()
+        val root = firestore.collection("users").document(uid)
+        collections.forEach { it.merge(root, uid) }
+        prefs.edit().remove(KEY_PENDING_UID).apply()
     }
 
     fun pendingUid(): String? = prefs.getString(KEY_PENDING_UID, null)
@@ -61,73 +86,82 @@ class FirebaseSyncManager(private val database: AppDatabase, context: Context) {
         WorkManager.getInstance(appContext).cancelUniqueWork(ONE_TIME_WORK_NAME)
     }
 
-    private suspend fun backup(uid: String, lastSyncTime: Long) {
-        val root = firestore.collection("users").document(uid)
-        val writes = mutableListOf<Pair<com.google.firebase.firestore.DocumentReference, Map<String, Any?>>>()
+    private inner class SyncCollection<T>(
+        private val name: String,
+        private val loadLocal: suspend () -> List<T>,
+        private val idOf: (T) -> String,
+        private val toMap: (T) -> Map<String, Any?>,
+        private val fromMap: (String, Map<String, Any?>) -> T,
+        private val upsertLocal: suspend (T) -> Unit,
+        private val deleteLocal: suspend (T) -> Unit
+    ) {
+        suspend fun merge(root: DocumentReference, uid: String) {
+            val remoteRef = root.collection(name)
+            val local = loadLocal().associateBy(idOf)
+            val remote = remoteRef.get().await().documents
+                .mapNotNull { doc -> doc.data?.let { doc.id to fromMap(doc.id, it) } }
+                .toMap()
+            val base = loadBase(uid)
+            val nextBase = HashMap<String, String>()
+            val remoteWrites = mutableListOf<Pair<String, T?>>()
 
-        // Collect changed tasks (only upload if created/modified after last sync)
-        database.taskDao().getAllTasksList().filter { it.createdAt > lastSyncTime }.forEach { task ->
-            writes += root.collection("tasks").document(task.id) to taskMap(task)
+            for (id in local.keys + remote.keys + base.keys) {
+                val l = local[id]
+                val r = remote[id]
+                val lHash = l?.let { fingerprint(toMap(it)) }
+                val rHash = r?.let { fingerprint(toMap(it)) }
+                val b = base[id]
+                val keepLocal = when {
+                    lHash == rHash -> null
+                    rHash == b -> true
+                    lHash == b -> false
+                    else -> l != null || r == null
+                }
+                when (keepLocal) {
+                    true -> remoteWrites += id to l
+                    false -> if (r != null) upsertLocal(r) else l?.let { deleteLocal(it) }
+                    null -> Unit
+                }
+                val winner = when (keepLocal) { true -> lHash; false -> rHash; null -> lHash }
+                if (winner != null) nextBase[id] = winner
+            }
+
+            remoteWrites.chunked(BATCH_SIZE).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { (id, value) ->
+                    val doc = remoteRef.document(id)
+                    if (value == null) batch.delete(doc) else batch.set(doc, toMap(value))
+                }
+                batch.commit().await()
+            }
+            saveBase(uid, nextBase)
         }
 
-        // Collect changed facts
-        database.factDao().getAllFactsList().filter { it.createdAt > lastSyncTime }.forEach { fact ->
-            writes += root.collection("facts").document(fact.id) to factMap(fact)
+        private fun baseKey(uid: String) = "$KEY_BASE_PREFIX$uid:$name"
+
+        private fun loadBase(uid: String): Map<String, String> {
+            val json = prefs.getString(baseKey(uid), null) ?: return emptyMap()
+            return runCatching {
+                val obj = JSONObject(json)
+                obj.keys().asSequence().associateWith { obj.getString(it) }
+            }.getOrDefault(emptyMap())
         }
 
-        // Collect changed pages (updatedAt field for modification tracking)
-        database.noteDao().getAllPagesList().filter { it.updatedAt > lastSyncTime }.forEach { page ->
-            writes += root.collection("note_pages").document(page.id) to pageMap(page)
-        }
-
-        // Collect note blocks
-        database.noteDao().getAllBlocksList().forEach { block ->
-            writes += root.collection("note_blocks").document(block.id) to blockMap(block)
-        }
-
-        // Collect page links
-        database.noteDao().getAllPageLinksList().forEach { link ->
-            writes += root.collection("page_links").document(link.id) to linkMap(link)
-        }
-
-        // Collect changed goals
-        database.goalDao().getAllGoalsList().filter { it.createdAt > lastSyncTime }.forEach { goal ->
-            writes += root.collection("goals").document(goal.id) to goalMap(goal)
-        }
-
-        // Collect changed projects (updatedAt field)
-        database.projectDao().getAllProjectsList().filter { it.updatedAt > lastSyncTime }.forEach { project ->
-            writes += root.collection("projects").document(project.id) to projectMap(project)
-        }
-
-        // Collect changed habits
-        database.habitDao().getAllHabitsList().filter { it.createdAt > lastSyncTime }.forEach { habit ->
-            writes += root.collection("habits").document(habit.id) to habitMap(habit)
-        }
-
-        // Collect changed chat messages
-        database.chatMessageDao().getAll().filter { it.timestamp > lastSyncTime }.forEach { msg ->
-            writes += root.collection("chat_messages").document(msg.id) to chatMap(msg)
-        }
-
-        writes.chunked(BATCH_SIZE).forEach { chunk ->
-            val batch = firestore.batch()
-            chunk.forEach { (document, values) -> batch.set(document, values) }
-            batch.commit().await()
+        private fun saveBase(uid: String, base: Map<String, String>) {
+            prefs.edit().putString(baseKey(uid), JSONObject(base).toString()).apply()
         }
     }
 
-    private suspend fun restore(uid: String) {
-        val root = firestore.collection("users").document(uid)
-        root.collection("tasks").get().await().documents.forEach { d -> d.data?.let { database.taskDao().insertTask(taskFrom(d.id, it)) } }
-        root.collection("facts").get().await().documents.forEach { d -> d.data?.let { database.factDao().insertFact(factFrom(d.id, it)) } }
-        root.collection("note_pages").get().await().documents.forEach { d -> d.data?.let { database.noteDao().insertPage(pageFrom(d.id, it)) } }
-        root.collection("note_blocks").get().await().documents.forEach { d -> d.data?.let { database.noteDao().insertBlock(blockFrom(d.id, it)) } }
-        root.collection("page_links").get().await().documents.forEach { d -> d.data?.let { database.noteDao().insertPageLink(linkFrom(d.id, it)) } }
-        root.collection("goals").get().await().documents.forEach { d -> d.data?.let { database.goalDao().insertGoal(goalFrom(d.id, it)) } }
-        root.collection("projects").get().await().documents.forEach { d -> d.data?.let { database.projectDao().insertProject(projectFrom(d.id, it)) } }
-        root.collection("habits").get().await().documents.forEach { d -> d.data?.let { database.habitDao().insertHabit(habitFrom(d.id, it)) } }
-        root.collection("chat_messages").get().await().documents.forEach { d -> d.data?.let { database.chatMessageDao().insert(chatFrom(d.id, it)) } }
+    // Stable content fingerprint: independent of map ordering and of Firestore's Long-vs-Int widening.
+    private fun fingerprint(values: Map<String, Any?>): String {
+        val canonical = values.toSortedMap().entries.joinToString("\u001F") { (key, value) ->
+            "$key=" + when (value) {
+                is Number -> value.toLong().toString()
+                else -> value.toString()
+            }
+        }
+        val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     private fun taskMap(value: TaskEntity) = mapOf("title" to value.title, "category" to value.category, "priority" to value.priority, "deadline" to value.deadline, "isCompleted" to value.isCompleted, "createdAt" to value.createdAt)
@@ -157,9 +191,10 @@ class FirebaseSyncManager(private val database: AppDatabase, context: Context) {
     private fun nullableLong(map: Map<String, Any?>, key: String) = (map[key] as? Number)?.toLong()
 
     companion object {
-        private const val BATCH_SIZE = 100
+        // Firestore allows 500 writes per batch; stay safely below it.
+        private const val BATCH_SIZE = 400
         private const val PREFS_NAME = "jax_firebase_sync"
-        private const val KEY_LAST_SYNC_TIMESTAMP = "last_sync_timestamp_ms"
+        private const val KEY_BASE_PREFIX = "sync_base:"
         private const val KEY_PENDING_UID = "pending_uid"
         private const val ONE_TIME_WORK_NAME = "jax_firebase_sync_once"
         private const val PERIODIC_WORK_NAME = "jax_firebase_sync_periodic"

@@ -3,12 +3,13 @@ package com.jax.assistant.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.jax.assistant.ai.JaxParseResult
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.ai.agent.ToolConfirmation
 import com.jax.assistant.config.AppConfig
 import com.jax.assistant.data.JaxRepository
@@ -23,27 +24,51 @@ import com.jax.assistant.db.NotePageEntity
 import com.jax.assistant.db.ProjectEntity
 import com.jax.assistant.db.TaskEntity
 import com.jax.assistant.ui.screens.ComposeChatMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = JaxRepository(application)
-    private val notesRepository = ServiceLocator.apply { init(application) }.notes
+    private val notesRepository = ServiceLocator.notes
     private val authRepository = ServiceLocator.auth
     private val firebaseSync = ServiceLocator.firebaseSync
 
-    private val _messages = MutableStateFlow<List<ComposeChatMessage>>(
-        listOf(
-            ComposeChatMessage("1", "Good day, Jagadeesh. J.A.X. is active and synced to your Room database.", false, "Now")
-        )
-    )
+    // One-shot user-facing message (shown as a toast), cleared once displayed.
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    fun consumeNotice() { _notice.value = null }
+
+    // Safety net: an unexpected failure in any background action is reported to the user
+    // instead of crashing the app. Cancellation never reaches this handler.
+    private val errorHandler = CoroutineExceptionHandler { _, error ->
+        Log.e(TAG, "Background action failed", error)
+        _notice.value = "Something went wrong: ${error.localizedMessage ?: error.javaClass.simpleName}"
+    }
+
+    private fun launchSafely(block: suspend CoroutineScope.() -> Unit): Job =
+        viewModelScope.launch(errorHandler, block = block)
+
+    private val _messages = MutableStateFlow(listOf(greeting(GREETING_TEXT)))
     val messages: StateFlow<List<ComposeChatMessage>> = _messages.asStateFlow()
+
+    // Chat turns run one at a time so a pending confirmation can never be orphaned by a second turn.
+    private val turnLock = Mutex()
+    private var lastMessageAt = 0L
 
     // A sensitive/destructive tool call awaiting the user's approval, surfaced to the UI.
     // The agent loop suspends on `pendingApproval` until resolveToolConfirmation() is called.
@@ -54,8 +79,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tasks = MutableStateFlow<List<TaskEntity>>(emptyList())
     val tasks: StateFlow<List<TaskEntity>> = _tasks.asStateFlow()
 
+    // Every fact, used as agent context; `facts` below is what the Memory Vault displays,
+    // which may be narrowed by a search query.
+    private val allFacts = MutableStateFlow<List<FactEntity>>(emptyList())
     private val _facts = MutableStateFlow<List<FactEntity>>(emptyList())
     val facts: StateFlow<List<FactEntity>> = _facts.asStateFlow()
+    private var factQuery = ""
+    private var factSearchJob: Job? = null
 
     private val _apiKey = MutableStateFlow<String>(repository.getApiKey())
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
@@ -76,7 +106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val voiceResponsesEnabled: StateFlow<Boolean> = _voiceResponsesEnabled.asStateFlow()
 
     private val _proactiveAutonomyLevel = MutableStateFlow(repository.getProactiveAutonomyLevel())
-    val proactiveAutonomyLevel: StateFlow<com.jax.assistant.ai.agent.AutonomyLevel> = _proactiveAutonomyLevel.asStateFlow()
+    val proactiveAutonomyLevel: StateFlow<AutonomyLevel> = _proactiveAutonomyLevel.asStateFlow()
 
     private val _signedInEmail = MutableStateFlow(authRepository.currentEmail)
     val signedInEmail: StateFlow<String?> = _signedInEmail.asStateFlow()
@@ -147,55 +177,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isAnalyzingImage: StateFlow<Boolean> = _isAnalyzingImage.asStateFlow()
 
     init {
-        // Crash recovery: reconcile agent runs interrupted by a previous process death.
-        viewModelScope.launch {
-            repository.reconcileInterruptedAgentRuns()
-        }
-        // Load persisted chat history (Phase 2 durable state).
-        viewModelScope.launch {
-            val history = repository.getChatHistory()
-            if (history.isNotEmpty()) {
-                _messages.value = history.map {
-                    ComposeChatMessage(it.id, it.text, it.isUser, formatTime(it.timestamp))
+        // Crash recovery: close out agent runs interrupted by a previous process death.
+        launchSafely { repository.reconcileInterruptedAgentRuns() }
+        // Restore persisted chat history, keeping anything typed while it was loading.
+        launchSafely {
+            val stored = repository.getChatHistory()
+            if (stored.isNotEmpty()) {
+                lastMessageAt = maxOf(lastMessageAt, stored.maxOf { it.timestamp })
+                val history = stored.map { ComposeChatMessage(it.id, it.text, it.isUser, formatTime(it.timestamp)) }
+                _messages.update { current ->
+                    (history + current.filter { it.id != GREETING_ID }).distinctBy { it.id }
                 }
             }
         }
-        // Observe Tasks
-        viewModelScope.launch {
-            repository.getAllTasks().collectLatest { list ->
-                _tasks.value = list
-            }
-        }
-        // Observe Facts
-        viewModelScope.launch {
+        launchSafely { repository.getAllTasks().collectLatest { _tasks.value = it } }
+        launchSafely {
             repository.getAllFacts().collectLatest { list ->
-                _facts.value = list
+                allFacts.value = list
+                if (factQuery.isBlank()) _facts.value = list
             }
         }
-        // Observe Note pages
-        viewModelScope.launch {
-            notesRepository.getAllPages().collectLatest { list ->
-                _pages.value = list
-            }
-        }
-        // Observe Goals
-        viewModelScope.launch {
-            repository.getAllGoals().collectLatest { list ->
-                _goals.value = list
-            }
-        }
-        // Observe Projects
-        viewModelScope.launch {
-            repository.getAllProjects().collectLatest { list ->
-                _projects.value = list
-            }
-        }
-        // Observe Habits
-        viewModelScope.launch {
-            repository.getAllHabits().collectLatest { list ->
-                _habits.value = list
-            }
-        }
+        launchSafely { notesRepository.getAllPages().collectLatest { _pages.value = it } }
+        launchSafely { repository.getAllGoals().collectLatest { _goals.value = it } }
+        launchSafely { repository.getAllProjects().collectLatest { _projects.value = it } }
+        launchSafely { repository.getAllHabits().collectLatest { _habits.value = it } }
     }
 
     fun setListening(listening: Boolean) { _isListening.value = listening }
@@ -206,48 +211,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Records a user command + JAX confirmation in the chat without invoking the AI (used for device actions).
     fun logAssistantAction(userText: String, replyText: String) {
-        val now = System.currentTimeMillis()
-        pushMessage(ComposeChatMessage(now.toString(), userText, true, "Now"))
-        pushMessage(ComposeChatMessage((now + 1).toString(), replyText, false, "Now"))
+        pushMessage(userText, isUser = true)
+        pushMessage(replyText, isUser = false)
     }
 
-    // Appends a chat message to the UI and persists it to Room.
-    private fun pushMessage(msg: ComposeChatMessage) {
-        _messages.value = _messages.value + msg
-        viewModelScope.launch {
-            repository.saveChatMessage(
-                ChatMessageEntity(
-                    id = msg.id,
-                    text = msg.text,
-                    isUser = msg.isUser,
-                    timestamp = msg.id.toLongOrNull() ?: System.currentTimeMillis()
-                )
-            )
+    // Appends a chat message to the UI and persists it. IDs are UUIDs (list keys must be
+    // unique) and timestamps are strictly increasing so persisted history keeps its order.
+    private fun pushMessage(text: String, isUser: Boolean) {
+        val at = maxOf(System.currentTimeMillis(), lastMessageAt + 1).also { lastMessageAt = it }
+        val message = ComposeChatMessage(UUID.randomUUID().toString(), text, isUser, formatTime(at))
+        _messages.update { it + message }
+        launchSafely {
+            repository.saveChatMessage(ChatMessageEntity(message.id, text, isUser, at))
         }
     }
 
     // Clears chat history and starts a fresh session.
     fun startNewChat() {
-        viewModelScope.launch {
+        launchSafely {
             repository.clearChatHistory()
-            _messages.value = listOf(
-                ComposeChatMessage("1", "Good day, Jagadeesh. J.A.X. is active and synced to your Room database.", false, "Now")
-            )
+            _messages.value = listOf(greeting(GREETING_TEXT))
         }
     }
 
     fun clearAllLocalData() {
-        viewModelScope.launch {
+        launchSafely {
             repository.clearAllLocalData()
-            _messages.value = listOf(
-                ComposeChatMessage("1", "Local data cleared. Add an API key to continue using J.A.X.", false, "Now")
-            )
+            _messages.value = listOf(greeting("Local data cleared. Add an API key to continue using J.A.X."))
             _apiKey.value = repository.getApiKey()
             _selectedModel.value = repository.getSelectedModel()
             _developerMode.value = repository.isDeveloperMode()
             _dailyAutomationEnabled.value = repository.isDailyAutomationEnabled()
             _taskContextAwarenessEnabled.value = repository.isTaskContextAwarenessEnabled()
             _voiceResponsesEnabled.value = repository.isVoiceResponsesEnabled()
+            _proactiveAutonomyLevel.value = repository.getProactiveAutonomyLevel()
         }
     }
 
@@ -264,37 +261,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendMessage(input: String, onSpeak: ((String) -> Unit)? = null) {
         if (input.isBlank()) return
-        // Build rolling multi-turn context from the last few messages before adding this one.
+        // Rolling multi-turn context from the messages before this one.
         val conversationSummary = _messages.value.takeLast(AppConfig.CONVERSATION_CONTEXT_TURNS).joinToString("\n") {
             (if (it.isUser) "Jagadeesh" else "J.A.X.") + ": " + it.text
         }
+        pushMessage(input, isUser = true)
 
-        val userMsg = ComposeChatMessage(System.currentTimeMillis().toString(), input, true, "Now")
-        pushMessage(userMsg)
-        _isProcessing.value = true
-
-        viewModelScope.launch {
-            try {
-                val reply = repository.runAgent(input, _facts.value, conversationSummary) { request ->
-                    // Suspend the agent loop until the user answers the confirmation dialog.
-                    val deferred = CompletableDeferred<Boolean>()
-                    pendingApproval = deferred
-                    _pendingConfirmation.value = request
-                    val approved = deferred.await()
+        launchSafely {
+            turnLock.withLock {
+                _isProcessing.value = true
+                val reply = try {
+                    repository.runAgent(input, allFacts.value, conversationSummary) { awaitUserConfirmation(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Chat turn failed", e)
+                    "System Error: ${e.localizedMessage ?: "Failed to process message"}"
+                } finally {
                     _pendingConfirmation.value = null
                     pendingApproval = null
-                    approved
+                    _isProcessing.value = false
                 }
-                pushMessage(ComposeChatMessage(System.currentTimeMillis().toString(), reply, false, "Now"))
+                pushMessage(reply, isUser = false)
                 onSpeak?.invoke(reply)
-            } catch (e: Exception) {
-                val errorMsg = "System Error: ${e.localizedMessage ?: "Failed to process message"}"
-                pushMessage(ComposeChatMessage(System.currentTimeMillis().toString(), errorMsg, false, "Now"))
-            } finally {
-                _pendingConfirmation.value = null
-                pendingApproval = null
-                _isProcessing.value = false
             }
+        }
+    }
+
+    // Suspends the agent loop until the user answers the confirmation dialog.
+    private suspend fun awaitUserConfirmation(request: ToolConfirmation): Boolean {
+        val deferred = CompletableDeferred<Boolean>()
+        pendingApproval = deferred
+        _pendingConfirmation.value = request
+        return try {
+            deferred.await()
+        } finally {
+            _pendingConfirmation.value = null
+            pendingApproval = null
         }
     }
 
@@ -304,58 +307,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleTask(task: TaskEntity) {
-        viewModelScope.launch {
-            repository.updateTask(task.copy(isCompleted = !task.isCompleted))
-        }
+        launchSafely { repository.updateTask(task.copy(isCompleted = !task.isCompleted)) }
     }
 
     fun updateTask(task: TaskEntity) {
-        viewModelScope.launch {
-            repository.updateTask(task)
-        }
+        launchSafely { repository.updateTask(task) }
     }
 
     fun deleteTask(task: TaskEntity) {
-        viewModelScope.launch {
-            repository.deleteTask(task)
-        }
+        launchSafely { repository.deleteTask(task) }
     }
 
     fun addManualTask(title: String, category: String, priority: String, deadline: String?) {
-        viewModelScope.launch {
-            repository.createManualTask(title, category, priority, deadline)
-        }
+        if (title.isBlank()) return
+        launchSafely { repository.createManualTask(title.trim(), category, priority, deadline) }
     }
 
     fun addManualFact(title: String, category: String, details: String) {
-        viewModelScope.launch {
-            repository.createManualFact(title, category, details)
-        }
+        if (title.isBlank() && details.isBlank()) return
+        launchSafely { repository.createManualFact(title.trim(), category, details.trim()) }
     }
 
     fun updateFact(fact: FactEntity) {
-        viewModelScope.launch {
-            repository.updateFact(fact)
-        }
+        launchSafely { repository.updateFact(fact) }
     }
 
     fun deleteFact(fact: FactEntity) {
-        viewModelScope.launch {
-            repository.deleteFact(fact)
-        }
+        launchSafely { repository.deleteFact(fact) }
     }
 
+    // Narrows only the Memory Vault view; the agent keeps seeing every fact.
     fun searchFacts(query: String) {
-        viewModelScope.launch {
-            if (query.isBlank()) {
-                repository.getAllFacts().collectLatest { list ->
-                    _facts.value = list
-                }
-            } else {
-                repository.searchFacts(query).collectLatest { list ->
-                    _facts.value = list
-                }
-            }
+        factQuery = query.trim()
+        factSearchJob?.cancel()
+        if (factQuery.isBlank()) {
+            _facts.value = allFacts.value
+            return
+        }
+        factSearchJob = launchSafely {
+            repository.searchFacts(factQuery).collectLatest { _facts.value = it }
         }
     }
 
@@ -389,7 +379,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _voiceResponsesEnabled.value = enabled
     }
 
-    fun setProactiveAutonomyLevel(level: com.jax.assistant.ai.agent.AutonomyLevel) {
+    fun setProactiveAutonomyLevel(level: AutonomyLevel) {
         repository.setProactiveAutonomyLevel(level)
         _proactiveAutonomyLevel.value = level
     }
@@ -399,15 +389,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun completeGoogleSignIn(data: Intent?, onSuccess: () -> Unit = {}) {
         _isSyncing.value = true
         authRepository.completeSignIn(data) { result ->
-            viewModelScope.launch {
-                result.onSuccess { email ->
-                    _signedInEmail.value = email
-                    syncNow()
-                    onSuccess()
-                }.onFailure { error ->
-                    _syncStatus.value = "Sign-in failed: ${error.localizedMessage ?: "unknown error"}"
-                    _isSyncing.value = false
-                }
+            result.onSuccess { email ->
+                _signedInEmail.value = email
+                syncNow()
+                onSuccess()
+            }.onFailure { error ->
+                _syncStatus.value = "Sign-in failed: ${error.localizedMessage ?: "unknown error"}"
+                _isSyncing.value = false
             }
         }
     }
@@ -418,18 +406,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val uid = authRepository.currentUid
         if (uid.isNullOrBlank()) {
             _syncStatus.value = "Sign in before syncing."
+            _isSyncing.value = false
             return
         }
-        _isSyncing.value = true
-        viewModelScope.launch {
-            try {
-                _syncStatus.value = firebaseSync.sync(uid)
-            } catch (error: Exception) {
-                _syncStatus.value = "Sync failed: ${error.localizedMessage ?: "unknown error"}"
-            } finally {
-                _isSyncing.value = false
-            }
-        }
+        _syncStatus.value = runCatching { firebaseSync.sync(uid) }
+            .getOrElse { "Sync failed: ${it.localizedMessage ?: "unknown error"}" }
+        _isSyncing.value = false
     }
 
     fun signOut() {
@@ -443,17 +425,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun getModelCatalog(): List<ModelInfo> = repository.getModelCatalog()
 
     fun runHealthCheck(onResult: (String) -> Unit) {
-        viewModelScope.launch {
-            val result = repository.runHealthCheck()
-            onResult(result)
-        }
+        launchSafely { onResult(repository.runHealthCheck()) }
     }
 
     fun testConnection(onResult: (TestConnectionResult) -> Unit) {
-        viewModelScope.launch {
-            val res = repository.testConnection()
-            onResult(res)
-        }
+        launchSafely { onResult(repository.testConnection()) }
     }
 
     fun getActiveModel(): String = repository.getActiveModel()
@@ -464,24 +440,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _focusBlockId = MutableStateFlow<String?>(null)
     val focusBlockId: StateFlow<String?> = _focusBlockId.asStateFlow()
 
+    // Pending debounced text saves, one per block: only the latest keystroke state is written.
+    private val blockSaveJobs = HashMap<String, Job>()
+
     fun consumeFocusBlock() { _focusBlockId.value = null }
 
     fun openPage(pageId: String) {
         _selectedPageId.value = pageId
         blocksJob?.cancel()
-        blocksJob = viewModelScope.launch {
-            notesRepository.getBlocksForPage(pageId).collectLatest { list ->
-                _blocks.value = list
-            }
+        blocksJob = launchSafely {
+            notesRepository.getBlocksForPage(pageId).collectLatest { _blocks.value = it }
         }
         relatedJob?.cancel()
-        relatedJob = viewModelScope.launch {
-            notesRepository.getRelatedPages(pageId).collectLatest { list ->
-                _relatedPages.value = list
-            }
+        relatedJob = launchSafely {
+            notesRepository.getRelatedPages(pageId).collectLatest { _relatedPages.value = it }
         }
         // Ensure a writable default text block and drop the cursor into it on a fresh page.
-        viewModelScope.launch {
+        launchSafely {
             val existing = notesRepository.getBlocksSnapshot(pageId)
             when {
                 existing.isEmpty() ->
@@ -503,18 +478,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createPage(title: String, category: String, tags: String = "") {
-        viewModelScope.launch {
+        launchSafely {
             val page = notesRepository.createPage(title, category, tags)
             openPage(page.id)
         }
     }
 
     fun renamePage(page: NotePageEntity, newTitle: String) {
-        viewModelScope.launch { notesRepository.renamePage(page, newTitle) }
+        launchSafely { notesRepository.renamePage(page, newTitle) }
     }
 
     fun updatePageTags(page: NotePageEntity, tags: String) {
-        viewModelScope.launch { notesRepository.updatePageTags(page, tags) }
+        launchSafely { notesRepository.updatePageTags(page, tags) }
     }
 
     fun searchNotes(query: String) {
@@ -523,13 +498,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _noteSearchResults.value = emptyList()
             return
         }
-        noteSearchJob = viewModelScope.launch {
+        noteSearchJob = launchSafely {
             notesRepository.searchPages(query).collectLatest { _noteSearchResults.value = it }
         }
     }
 
     fun deletePage(page: NotePageEntity) {
-        viewModelScope.launch {
+        launchSafely {
             notesRepository.deletePage(page)
             if (_selectedPageId.value == page.id) closePage()
         }
@@ -537,99 +512,103 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun linkPage(otherPageId: String) {
         val current = _selectedPageId.value ?: return
-        viewModelScope.launch { notesRepository.linkPages(current, otherPageId) }
+        launchSafely { notesRepository.linkPages(current, otherPageId) }
     }
 
     fun unlinkPage(otherPageId: String) {
         val current = _selectedPageId.value ?: return
-        viewModelScope.launch { notesRepository.unlinkPages(current, otherPageId) }
+        launchSafely { notesRepository.unlinkPages(current, otherPageId) }
     }
 
     fun addBlock(type: String, afterBlockId: String?) {
         val pageId = _selectedPageId.value ?: return
-        viewModelScope.launch {
+        launchSafely {
             val block = notesRepository.addBlockAfter(pageId, afterBlockId, type)
             _focusBlockId.value = block.id
         }
     }
 
+    // Called on every keystroke; debounced so writes land in order and the DB is not hammered.
     fun updateBlockContent(block: NoteBlockEntity, content: String) {
-        viewModelScope.launch { notesRepository.updateBlock(block.copy(content = content)) }
+        blockSaveJobs.remove(block.id)?.cancel()
+        blockSaveJobs[block.id] = launchSafely {
+            delay(BLOCK_SAVE_DEBOUNCE_MS)
+            notesRepository.updateBlockContent(block, content)
+        }
     }
 
     fun toggleBlockChecked(block: NoteBlockEntity) {
-        viewModelScope.launch { notesRepository.updateBlock(block.copy(checked = !block.checked)) }
+        launchSafely { notesRepository.setBlockChecked(block, !block.checked) }
     }
 
     fun changeBlockType(block: NoteBlockEntity, type: String) {
-        viewModelScope.launch { notesRepository.updateBlock(block.copy(type = type)) }
+        launchSafely { notesRepository.setBlockType(block, type) }
     }
 
     fun deleteBlock(block: NoteBlockEntity) {
-        viewModelScope.launch { notesRepository.deleteBlock(block) }
+        blockSaveJobs.remove(block.id)?.cancel()
+        launchSafely { notesRepository.deleteBlock(block) }
     }
 
-    // ---- Executive Intelligence (Phase 2) ----
+    // ---- Executive Intelligence ----
 
     fun addGoal(title: String, category: String, targetValue: Int, deadline: String?) {
         if (title.isBlank()) return
-        viewModelScope.launch { repository.createGoal(title, category, targetValue, deadline) }
+        launchSafely { repository.createGoal(title.trim(), category, targetValue, deadline) }
     }
 
     fun incrementGoalProgress(goal: GoalEntity, delta: Int) {
-        viewModelScope.launch { repository.incrementGoalProgress(goal, delta) }
+        launchSafely { repository.incrementGoalProgress(goal, delta) }
     }
 
     fun toggleGoalComplete(goal: GoalEntity) {
-        viewModelScope.launch {
+        launchSafely {
             val done = !goal.isCompleted
             repository.updateGoal(
-                goal.copy(
-                    isCompleted = done,
-                    currentValue = if (done) goal.targetValue else goal.currentValue
-                )
+                goal.copy(isCompleted = done, currentValue = if (done) goal.targetValue else goal.currentValue)
             )
         }
     }
 
     fun deleteGoal(goal: GoalEntity) {
-        viewModelScope.launch { repository.deleteGoal(goal) }
+        launchSafely { repository.deleteGoal(goal) }
     }
 
     fun addProject(name: String, description: String) {
         if (name.isBlank()) return
-        viewModelScope.launch { repository.createProject(name, description) }
+        launchSafely { repository.createProject(name.trim(), description) }
     }
 
     fun cycleProjectStatus(project: ProjectEntity) {
-        viewModelScope.launch { repository.cycleProjectStatus(project) }
+        launchSafely { repository.cycleProjectStatus(project) }
     }
 
     fun deleteProject(project: ProjectEntity) {
-        viewModelScope.launch { repository.deleteProject(project) }
+        launchSafely { repository.deleteProject(project) }
     }
 
     fun addHabit(name: String, category: String) {
         if (name.isBlank()) return
-        viewModelScope.launch { repository.createHabit(name, category) }
+        launchSafely { repository.createHabit(name.trim(), category) }
     }
 
     fun toggleHabitToday(habit: HabitEntity) {
-        viewModelScope.launch { repository.toggleHabitToday(habit) }
+        launchSafely { repository.toggleHabitToday(habit) }
     }
 
     fun deleteHabit(habit: HabitEntity) {
-        viewModelScope.launch { repository.deleteHabit(habit) }
+        launchSafely { repository.deleteHabit(habit) }
     }
 
     fun generateDailyPlan() {
         if (_isPlanning.value) return
         _isPlanning.value = true
-        viewModelScope.launch {
+        launchSafely {
             try {
                 val openTasks = _tasks.value.filter { !it.isCompleted }
-                val today = java.time.LocalDate.now().toString()
-                _dailyPlan.value = repository.generateDailyPlan(openTasks, today)
+                _dailyPlan.value = repository.generateDailyPlan(openTasks, java.time.LocalDate.now().toString())
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _dailyPlan.value = "Could not generate plan: ${e.localizedMessage ?: "unknown error"}"
             } finally {
@@ -642,7 +621,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_isAnalyzingImage.value) return
         _isAnalyzingImage.value = true
         _visionAnalysis.value = ""
-        viewModelScope.launch {
+        launchSafely {
             try {
                 _visionAnalysis.value = repository.analyzeImage(imageUri)
             } finally {
@@ -651,11 +630,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Clean up coroutine jobs on ViewModel destruction to prevent leaks on config change
-    override fun onCleared() {
-        super.onCleared()
-        blocksJob?.cancel()
-        relatedJob?.cancel()
-        noteSearchJob?.cancel()
+    private companion object {
+        const val TAG = "MainViewModel"
+        const val GREETING_ID = "greeting"
+        const val GREETING_TEXT = "Good day, Jagadeesh. J.A.X. is active and synced to your Room database."
+        const val BLOCK_SAVE_DEBOUNCE_MS = 300L
+
+        fun greeting(text: String) = ComposeChatMessage(GREETING_ID, text, isUser = false, timestamp = "Now")
     }
 }

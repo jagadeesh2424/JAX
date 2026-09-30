@@ -2,6 +2,7 @@ package com.jax.assistant
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -9,9 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.core.content.ContextCompat
 import androidx.work.*
 import com.jax.assistant.device.DeviceCommandParser
@@ -31,46 +32,45 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private lateinit var voiceManager: VoiceManager
     private lateinit var liveVoiceProvider: GeminiLiveVoiceProvider
-    private var pendingLiveStartAfterSignIn = false
     private val deviceController by lazy { DeviceController(applicationContext) }
 
     private val requestMicPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                // Use Gemini Live only if conversation mode AND user is signed in.
-                if (viewModel.conversationMode.value && viewModel.isFirebaseUserSignedIn()) {
-                    liveVoiceProvider.start()
-                } else {
-                    voiceManager.startListening()
-                }
+                startVoiceInput()
             } else {
-                Toast.makeText(
-                    this,
-                    "Microphone permission is required for voice input.",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this, "Microphone permission is required for voice input.", Toast.LENGTH_LONG).show()
             }
         }
 
+    // Result is informational only: briefings simply stay silent if the user declines.
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     private val googleSignInLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            viewModel.completeGoogleSignIn(result.data) {
-                if (pendingLiveStartAfterSignIn) {
-                    pendingLiveStartAfterSignIn = false
-                    viewModel.setConversationMode(true)
-                    startVoiceInput()
-                }
-            }
+            viewModel.completeGoogleSignIn(result.data)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Setup WorkManager for Daily 9:00 AM Agent Briefing
+        // Voice components are created before setContent: activity-result callbacks (mic
+        // permission, sign-in) can be delivered before the first composition after a process restart.
+        initVoice()
+        requestNotificationPermissionIfNeeded()
+
         scheduleDailyBriefingWorker()
         scheduleConsolidationWorker()
-        // Setup WorkManager for the weekly executive review
         scheduleWeeklyReviewWorker()
+
+        // Deep-link: the 9 AM briefing notification opens the Briefing tab;
+        // the weekly review notification opens the Executive Dashboard.
+        val startTab = when {
+            intent?.getBooleanExtra("open_dashboard", false) == true -> 7
+            intent?.getBooleanExtra("open_briefing", false) == true -> 4
+            else -> 0
+        }
 
         setContent {
             JAXAssistantTheme {
@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
                 val dailyAutomationEnabled by viewModel.dailyAutomationEnabled.collectAsState()
                 val taskContextAwarenessEnabled by viewModel.taskContextAwarenessEnabled.collectAsState()
                 val voiceResponsesEnabled by viewModel.voiceResponsesEnabled.collectAsState()
+                val proactiveAutonomyLevel by viewModel.proactiveAutonomyLevel.collectAsState()
                 val signedInEmail by viewModel.signedInEmail.collectAsState()
                 val syncStatus by viewModel.syncStatus.collectAsState()
                 val isSyncing by viewModel.isSyncing.collectAsState()
@@ -97,6 +98,7 @@ class MainActivity : ComponentActivity() {
                 val habits by viewModel.habits.collectAsState()
                 val dailyPlan by viewModel.dailyPlan.collectAsState()
                 val isPlanning by viewModel.isPlanning.collectAsState()
+                val isProcessing by viewModel.isProcessing.collectAsState()
                 val isListening by viewModel.isListening.collectAsState()
                 val voiceDraft by viewModel.voiceDraft.collectAsState()
                 val conversationMode by viewModel.conversationMode.collectAsState()
@@ -104,60 +106,16 @@ class MainActivity : ComponentActivity() {
                 val visionAnalysis by viewModel.visionAnalysis.collectAsState()
                 val isAnalyzingImage by viewModel.isAnalyzingImage.collectAsState()
                 val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
+                val notice by viewModel.notice.collectAsState()
                 val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
                     uri?.let { viewModel.analyzeImage(it) }
                 }
 
-                // Deep-link: the 9 AM briefing notification opens straight to the Briefing tab;
-                // the weekly review notification opens the Executive Dashboard.
-                val startTab = when {
-                    intent?.getBooleanExtra("open_dashboard", false) == true -> 7
-                    intent?.getBooleanExtra("open_briefing", false) == true -> 4
-                    else -> 0
-                }
-
-                // Initialize Voice STT & TTS
-                voiceManager = remember {
-                    VoiceManager(
-                        context = this@MainActivity,
-                        onSpeechResult = { text ->
-                            viewModel.clearVoiceDraft()
-                            val clean = VoiceManager.stripWakePhrase(text)
-                            handleUserInput(clean)
-                        },
-                        onPartialSpeechResult = { text ->
-                            viewModel.setVoiceDraft(text)
-                        },
-                        onError = { message ->
-                            viewModel.setListening(false)
-                            runOnUiThread {
-                                Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onListeningStateChanged = { listening ->
-                            viewModel.setListening(listening)
-                        },
-                        onSpeakingStateChanged = { speaking ->
-                            viewModel.setSpeaking(speaking)
-                            // Hands-free: once J.A.X. finishes speaking, re-open the mic for the next turn.
-                            if (!speaking && viewModel.conversationMode.value && !liveVoiceProvider.isActive()) {
-                                runOnUiThread { startVoiceInput() }
-                            }
-                        }
-                    )
-                }
-                if (!::liveVoiceProvider.isInitialized) {
-                    liveVoiceProvider = GeminiLiveVoiceProvider(
-                        onInputTranscript = { text -> viewModel.setVoiceDraft("You: $text") },
-                        onOutputTranscript = { text -> viewModel.setVoiceDraft("J.A.X.: $text") },
-                        onActiveChanged = { active -> viewModel.setListening(active) },
-                        onError = { message ->
-                            viewModel.setListening(false)
-                            runOnUiThread {
-                                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    )
+                LaunchedEffect(notice) {
+                    notice?.let {
+                        Toast.makeText(this@MainActivity, it, Toast.LENGTH_LONG).show()
+                        viewModel.consumeNotice()
+                    }
                 }
 
                 MainScreen(
@@ -173,6 +131,8 @@ class MainActivity : ComponentActivity() {
                     onToggleTaskContextAwareness = { viewModel.setTaskContextAwarenessEnabled(it) },
                     voiceResponsesEnabled = voiceResponsesEnabled,
                     onToggleVoiceResponses = { viewModel.setVoiceResponsesEnabled(it) },
+                    proactiveAutonomyLevel = proactiveAutonomyLevel,
+                    onChangeProactiveAutonomyLevel = { viewModel.setProactiveAutonomyLevel(it) },
                     signedInEmail = signedInEmail,
                     syncStatus = syncStatus,
                     isSyncing = isSyncing,
@@ -261,6 +221,7 @@ class MainActivity : ComponentActivity() {
                     onToggleHabit = { viewModel.toggleHabitToday(it) },
                     onDeleteHabit = { viewModel.deleteHabit(it) },
                     initialTab = startTab,
+                    isProcessing = isProcessing,
                     isListening = isListening,
                     voiceDraft = voiceDraft,
                     conversationMode = conversationMode,
@@ -271,8 +232,7 @@ class MainActivity : ComponentActivity() {
                             startVoiceInput()
                         } else {
                             viewModel.setConversationMode(false)
-                            liveVoiceProvider.stop()
-                            voiceManager.stopListening()
+                            stopVoiceInput()
                         }
                     },
                     onMicClick = {
@@ -301,8 +261,59 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun initVoice() {
+        liveVoiceProvider = GeminiLiveVoiceProvider(
+            onInputTranscript = { text -> viewModel.setVoiceDraft("You: $text") },
+            onOutputTranscript = { text -> viewModel.setVoiceDraft("J.A.X.: $text") },
+            onActiveChanged = { active -> viewModel.setListening(active) },
+            onError = { message ->
+                viewModel.setListening(false)
+                runOnUiThread {
+                    // Firebase Live can disconnect because of auth, model availability, or
+                    // network conditions. Keep voice input usable through Android STT and
+                    // leave conversation mode so the app does not immediately reconnect.
+                    viewModel.setConversationMode(false)
+                    Toast.makeText(
+                        this,
+                        "Live voice unavailable. Switching to device voice input.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    if (!isFinishing && !isDestroyed) voiceManager.startListening()
+                }
+            }
+        )
+        voiceManager = VoiceManager(
+            context = this,
+            onSpeechResult = { text ->
+                viewModel.clearVoiceDraft()
+                handleUserInput(VoiceManager.stripWakePhrase(text))
+            },
+            onPartialSpeechResult = { text -> viewModel.setVoiceDraft(text) },
+            onError = { message ->
+                viewModel.setListening(false)
+                runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+            },
+            onListeningStateChanged = { listening -> viewModel.setListening(listening) },
+            onSpeakingStateChanged = { speaking ->
+                viewModel.setSpeaking(speaking)
+                // Hands-free: once J.A.X. finishes speaking, re-open the mic for the next turn.
+                if (!speaking && viewModel.conversationMode.value && !liveVoiceProvider.isActive()) {
+                    runOnUiThread { if (!isFinishing && !isDestroyed) startVoiceInput() }
+                }
+            }
+        )
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     // Device commands (open app, call, search, navigate, alarm/timer) run locally; everything else goes to the AI.
     private fun handleUserInput(input: String) {
+        if (input.isBlank()) return
         val command = DeviceCommandParser.parse(input)
         if (command != null) {
             val reply = deviceController.execute(command)
@@ -317,30 +328,26 @@ class MainActivity : ComponentActivity() {
 
     private fun handleMicClick() {
         // Tapping the mic while listening stops it; otherwise start a voice turn.
-        if (viewModel.isListening.value) {
-            if (viewModel.conversationMode.value) liveVoiceProvider.stop()
-            else voiceManager.stopListening()
-            return
-        }
-        startVoiceInput()
+        if (viewModel.isListening.value) stopVoiceInput() else startVoiceInput()
+    }
+
+    private fun stopVoiceInput() {
+        liveVoiceProvider.stop()
+        voiceManager.stopListening()
     }
 
     private fun startVoiceInput() {
-        val granted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-        if (granted) {
-            // Use Gemini Live only if conversation mode is enabled AND user is signed in.
-            // Otherwise fall back to local STT/TTS.
-            if (viewModel.conversationMode.value && viewModel.isFirebaseUserSignedIn()) {
-                liveVoiceProvider.start()
-            } else {
-                voiceManager.startListening()
-            }
-        } else {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) {
             requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
         }
+        // Gemini Live needs conversation mode AND a Firebase sign-in; otherwise use local STT/TTS.
+        if (viewModel.conversationMode.value && viewModel.isFirebaseUserSignedIn()) {
+            liveVoiceProvider.start()
+        } else {
+            voiceManager.startListening()
         }
     }
 
@@ -430,11 +437,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (::voiceManager.isInitialized) {
-            voiceManager.shutdown()
-        }
-        if (::liveVoiceProvider.isInitialized) {
-            liveVoiceProvider.shutdown()
-        }
+        voiceManager.shutdown()
+        liveVoiceProvider.shutdown()
     }
 }

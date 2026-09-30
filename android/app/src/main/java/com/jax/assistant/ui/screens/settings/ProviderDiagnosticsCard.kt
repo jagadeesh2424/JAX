@@ -65,10 +65,10 @@ fun ProviderDiagnosticsCard(
         val httpStatusStr = lastLog?.let { "HTTP ${it.httpStatus ?: 200}" } ?: "200 OK"
         val googleErrorStr = lastLog?.let { if (!it.isSuccess) "Error Code: ${it.httpStatus}" else "None (200 OK)" } ?: "None (200 OK)"
 
-        DiagnosticRow("SDK Version", "0.9.0")
+        DiagnosticRow("SDK Version", "REST API")
         DiagnosticRow("REST Endpoint", "https://generativelanguage.googleapis.com/v1beta")
         DiagnosticRow("API Version", "v1beta")
-        DiagnosticRow("Installed SDK", "com.google.ai.client.generativeai:0.9.0")
+        DiagnosticRow("Installed SDK", "Gemini REST API")
         DiagnosticRow("Selected Model", selectedModel.ifBlank { "gemini-2.0-flash" })
         DiagnosticRow("Available Models", availableModelsStr)
         DiagnosticRow("HTTP Status", httpStatusStr)

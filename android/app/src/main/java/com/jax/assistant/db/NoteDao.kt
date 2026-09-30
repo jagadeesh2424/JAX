@@ -53,6 +53,15 @@ interface NoteDao {
     @Update
     suspend fun updateBlock(block: NoteBlockEntity)
 
+    @Query("UPDATE note_blocks SET content = :content WHERE id = :blockId")
+    suspend fun updateBlockContent(blockId: String, content: String)
+
+    @Query("UPDATE note_blocks SET checked = :checked WHERE id = :blockId")
+    suspend fun updateBlockChecked(blockId: String, checked: Boolean)
+
+    @Query("UPDATE note_blocks SET type = :type WHERE id = :blockId")
+    suspend fun updateBlockType(blockId: String, type: String)
+
     @Delete
     suspend fun deleteBlock(block: NoteBlockEntity)
 

@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,15 +50,23 @@ fun OmniChatScreen(
     onSendMessage: (String) -> Unit,
     onMicClick: () -> Unit,
     voiceDraft: String = "",
+    isProcessing: Boolean = false,
     isListening: Boolean = false,
     conversationMode: Boolean = false,
     onToggleConversationMode: () -> Unit = {},
     onNewChat: () -> Unit = {}
 ) {
     var inputText by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(voiceDraft) {
         if (voiceDraft.isNotBlank()) inputText = voiceDraft
+    }
+
+    // Keep the newest message (or the thinking indicator) in view.
+    LaunchedEffect(messages.size, isProcessing) {
+        val lastIndex = messages.size - (if (isProcessing) 0 else 1)
+        if (lastIndex >= 0) listState.animateScrollToItem(lastIndex)
     }
 
     // Pulsing animation for the mic while actively listening.
@@ -88,6 +97,7 @@ fun OmniChatScreen(
         }
         // Chat Messages List
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 16.dp),
@@ -119,6 +129,16 @@ fun OmniChatScreen(
                             fontSize = 14.sp
                         )
                     }
+                }
+            }
+            if (isProcessing) {
+                item(key = "thinking") {
+                    Text(
+                        text = "J.A.X. is thinking\u2026",
+                        color = CyanAccent.copy(alpha = 0.8f),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
                 }
             }
         }

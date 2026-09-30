@@ -11,8 +11,8 @@ import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.LiveSession
 import com.google.firebase.ai.type.PublicPreviewAPI
 import com.google.firebase.ai.type.ResponseModality
-import com.google.firebase.ai.type.Transcription
 import com.google.firebase.ai.type.liveGenerationConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,9 +22,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Gemini Live audio provider with enhanced reliability (Priority #6).
- * Connection lifecycle: start → connect → audio-conversation → monitor → [auto-reconnect on disconnect].
- * Network resilience: exponential backoff, session recovery, heartbeat monitoring.
+ * Gemini Live audio provider: start -> connect -> audio conversation -> monitor, with automatic
+ * reconnection (exponential backoff) when the server drops the session.
  */
 @OptIn(PublicPreviewAPI::class)
 class GeminiLiveVoiceProvider(
@@ -35,53 +34,51 @@ class GeminiLiveVoiceProvider(
     private val functionCallHandler: ((FunctionCallPart) -> FunctionResponsePart)? = null
 ) : VoiceProvider {
 
+    enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
+
     companion object {
         const val MODEL_NAME = "gemini-2.5-flash-native-audio-preview-12-2025"
         private const val TAG = "GeminiLiveVoice"
-        // Exponential backoff: 250ms base, up to 10s max, for auto-reconnect.
-        private const val RECONNECT_DELAY_BASE_MS = 250L
-        private const val RECONNECT_DELAY_MAX_MS = 10_000L
-        private const val RECONNECT_BACKOFF_MULTIPLIER = 1.5f
+        const val RECONNECT_DELAY_BASE_MS = 250L
+        const val RECONNECT_DELAY_MAX_MS = 10_000L
+        private const val RECONNECT_BACKOFF_MULTIPLIER = 1.5
+        private const val MAX_RECONNECT_ATTEMPTS = 5
+        private const val SESSION_POLL_MS = 1_000L
+
+        fun nextReconnectDelay(currentMs: Long): Long =
+            (currentMs * RECONNECT_BACKOFF_MULTIPLIER).toLong().coerceIn(RECONNECT_DELAY_BASE_MS, RECONNECT_DELAY_MAX_MS)
     }
 
+    // All mutable state below is only touched on the main thread (scope uses Dispatchers.Main).
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var session: LiveSession? = null
     private var stopped = true
     private var reconnecting = false
     private var monitorJob: Job? = null
-    // Connection state tracking: explicit lifecycle for debugging and conditional logic.
-    private var connectionState = ConnectionState.DISCONNECTED
     private var reconnectDelayMs = RECONNECT_DELAY_BASE_MS
     private var inputTranscript = StringBuilder()
     private var outputTranscript = StringBuilder()
 
-    // Lifecycle states for the connection.
-    private enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
+    var state: ConnectionState = ConnectionState.DISCONNECTED
+        private set
 
     override fun start() {
         if (!stopped) return
-        // Check Firebase auth before attempting connection.
         if (FirebaseAuth.getInstance().currentUser == null) {
-            val msg = "Firebase sign-in required for Gemini Live; use local voice instead."
-            android.util.Log.w(TAG, msg)
-            onError(msg)
-            onActiveChanged(false)
-            connectionState = ConnectionState.ERROR
+            fail("Firebase sign-in required for Gemini Live; use local voice instead.")
             return
         }
         stopped = false
-        connectionState = ConnectionState.CONNECTING
         reconnectDelayMs = RECONNECT_DELAY_BASE_MS
+        state = ConnectionState.CONNECTING
         scope.launch {
             try {
-                android.util.Log.d(TAG, "Starting Gemini Live connection...")
                 connectAndStart()
-            } catch (error: Exception) {
-                val msg = error.userMessage()
-                android.util.Log.e(TAG, "Gemini Live start failed: $msg", error)
-                onActiveChanged(false)
-                onError(msg)
-                connectionState = ConnectionState.ERROR
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Gemini Live start failed", e)
+                fail(e.userMessage())
             }
         }
     }
@@ -90,97 +87,95 @@ class GeminiLiveVoiceProvider(
 
     @SuppressLint("MissingPermission")
     private suspend fun connectAndStart() {
-        session?.close()
-        try {
-            val generationConfig = liveGenerationConfig {
+        session?.let { runCatching { it.close() } }
+        val liveModel = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel(
+            modelName = MODEL_NAME,
+            generationConfig = liveGenerationConfig {
                 responseModality = ResponseModality.AUDIO
                 inputAudioTranscription = AudioTranscriptionConfig()
                 outputAudioTranscription = AudioTranscriptionConfig()
             }
+        )
+        val newSession = liveModel.connect()
+        if (stopped) {
+            runCatching { newSession.close() }
+            return
+        }
+        session = newSession
+        // SDK callbacks arrive on background threads; hop to main before touching state.
+        newSession.startAudioConversation(
+            functionCallHandler,
+            { input, output ->
+                val inText = input?.text?.takeIf { it.isNotBlank() }
+                val outText = output?.text?.takeIf { it.isNotBlank() }
+                scope.launch {
+                    inText?.let { onInputTranscript(inputTranscript.append(it).toString()) }
+                    outText?.let { onOutputTranscript(outputTranscript.append(it).toString()) }
+                }
+            },
+            { goAway ->
+                android.util.Log.d(TAG, "Server is closing the session: $goAway")
+                scope.launch { reconnect() }
+            },
+            true
+        )
+        state = ConnectionState.CONNECTED
+        reconnectDelayMs = RECONNECT_DELAY_BASE_MS
+        onActiveChanged(true)
 
-            android.util.Log.d(TAG, "Creating liveModel with $MODEL_NAME...")
-            val liveModel = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel(
-                modelName = MODEL_NAME,
-                generationConfig = generationConfig
-            )
-            android.util.Log.d(TAG, "Connecting to server...")
-            val newSession = liveModel.connect()
-            session = newSession
-            connectionState = ConnectionState.CONNECTED
-            android.util.Log.d(TAG, "Connected. Starting audio conversation...")
-            newSession.startAudioConversation(
-                functionCallHandler,
-                { input, output ->
-                    input?.text?.takeIf { it.isNotBlank() }?.let {
-                        inputTranscript.append(it)
-                        onInputTranscript(inputTranscript.toString())
-                    }
-                    output?.text?.takeIf { it.isNotBlank() }?.let {
-                        outputTranscript.append(it)
-                        onOutputTranscript(outputTranscript.toString())
-                    }
-                },
-                { goAway ->
-                    android.util.Log.d(TAG, "Server closed session: ${goAway.reason}")
-                    connectionState = ConnectionState.DISCONNECTED
-                    reconnectAfterGoAway()
-                },
-                true
-            )
-            android.util.Log.d(TAG, "Audio conversation started successfully.")
-            onActiveChanged(true)
-            monitorJob?.cancel()
-            monitorJob = scope.launch {
-                while (!stopped && session === newSession) {
-                    delay(1_000)
-                    if (newSession.isClosed()) {
-                        android.util.Log.d(TAG, "Session closed by server.")
-                        connectionState = ConnectionState.DISCONNECTED
-                        onActiveChanged(false)
-                        reconnectAfterGoAway()
-                        break
-                    }
+        monitorJob?.cancel()
+        monitorJob = scope.launch {
+            while (!stopped && session === newSession) {
+                delay(SESSION_POLL_MS)
+                if (newSession.isClosed()) {
+                    onActiveChanged(false)
+                    reconnect()
+                    break
                 }
             }
-        } catch (e: Exception) {
-            android.util.Log.e(TAG, "Connection setup failed", e)
-            connectionState = ConnectionState.ERROR
-            throw e
         }
     }
 
-    private fun reconnectAfterGoAway() {
+    // Retries with exponential backoff; gives up (and reports) after MAX_RECONNECT_ATTEMPTS.
+    private suspend fun reconnect() {
         if (stopped || reconnecting) return
         reconnecting = true
-        connectionState = ConnectionState.RECONNECTING
-        scope.launch {
-            try {
-                val delayMs = reconnectDelayMs.toLong()
-                android.util.Log.d(TAG, "Reconnecting after ${delayMs}ms...")
-                delay(delayMs)
-                // Exponential backoff for next attempt: cap at MAX.
-                reconnectDelayMs = (reconnectDelayMs * RECONNECT_BACKOFF_MULTIPLIER)
-                    .toLong()
-                    .coerceAtMost(RECONNECT_DELAY_MAX_MS)
-                if (!stopped) {
-                    connectionState = ConnectionState.CONNECTING
+        state = ConnectionState.RECONNECTING
+        try {
+            repeat(MAX_RECONNECT_ATTEMPTS) {
+                delay(reconnectDelayMs)
+                reconnectDelayMs = nextReconnectDelay(reconnectDelayMs)
+                if (stopped) return
+                try {
                     connectAndStart()
+                    return
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w(TAG, "Reconnect attempt failed", e)
                 }
-            } catch (error: Exception) {
-                if (!stopped) {
-                    onError("Live voice disconnected: ${error.userMessage()}")
-                    connectionState = ConnectionState.ERROR
-                }
-            } finally {
-                reconnecting = false
             }
+            fail("Live voice disconnected. Check your connection and try again.")
+        } finally {
+            reconnecting = false
         }
+    }
+
+    // Terminal failure: reset to a restartable state and tell the user.
+    private fun fail(message: String) {
+        stopped = true
+        session = null
+        monitorJob?.cancel()
+        monitorJob = null
+        state = ConnectionState.ERROR
+        onActiveChanged(false)
+        onError(message)
     }
 
     override fun stop() {
         stopped = true
         reconnecting = false
-        connectionState = ConnectionState.DISCONNECTED
+        state = ConnectionState.DISCONNECTED
         monitorJob?.cancel()
         monitorJob = null
         session?.let {

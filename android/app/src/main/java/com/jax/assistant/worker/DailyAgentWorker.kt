@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.jax.assistant.MainActivity
+import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.ai.agent.ProactiveInsightEngine
 import com.jax.assistant.data.UserPreferencesRepository
 import com.jax.assistant.db.AppDatabase
@@ -22,16 +23,24 @@ class DailyAgentWorker(
 
     override suspend fun doWork(): Result {
         val preferences = UserPreferencesRepository(appContext)
-        if (!preferences.isDailyAutomationEnabled()) return Result.success()
-        val db = AppDatabase.getDatabase(appContext)
-        val tasks = db.taskDao().getAllTasksList()
-        val summaryText = ProactiveInsightEngine().dailyBriefing(
-            tasks,
-            LocalDate.now(),
-            preferences.isTaskContextAwarenessEnabled()
-        )
+        val level = preferences.getProactiveAutonomyLevel()
+        if (!preferences.isDailyAutomationEnabled() || level == AutonomyLevel.OFF) return Result.success()
 
-        showNotification("J.A.X. Daily Briefing", summaryText)
+        val tasks = AppDatabase.getDatabase(appContext).taskDao().getAllTasksList()
+        val engine = ProactiveInsightEngine()
+        val today = LocalDate.now()
+        val useTaskContext = preferences.isTaskContextAwarenessEnabled()
+
+        val suggestions = if (useTaskContext) engine.suggest(tasks, today, level) else emptyList()
+        val body = if (suggestions.isEmpty()) {
+            engine.dailyBriefing(tasks, today, useTaskContext)
+        } else {
+            suggestions.joinToString("\n") { s ->
+                "\u2022 ${s.observation}" + (s.suggestedAction?.let { " Suggested: $it" } ?: "")
+            }
+        }
+
+        showNotification("J.A.X. Daily Briefing", body)
         return Result.success()
     }
 

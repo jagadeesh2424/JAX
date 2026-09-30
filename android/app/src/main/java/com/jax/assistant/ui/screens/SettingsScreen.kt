@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.ui.theme.CyanAccent
 import com.jax.assistant.ui.theme.GoldAccent
 import com.jax.assistant.ui.theme.JAXAssistantTheme
@@ -53,6 +54,8 @@ fun SettingsScreen(
     onToggleTaskContextAwareness: (Boolean) -> Unit = {},
     voiceResponsesEnabled: Boolean = true,
     onToggleVoiceResponses: (Boolean) -> Unit = {},
+    proactiveAutonomyLevel: AutonomyLevel = AutonomyLevel.NOTIFY,
+    onChangeProactiveAutonomyLevel: (AutonomyLevel) -> Unit = {},
     signedInEmail: String? = null,
     syncStatus: String = "",
     isSyncing: Boolean = false,
@@ -492,6 +495,32 @@ fun SettingsScreen(
                     colors = SwitchDefaults.colors(checkedThumbColor = PureDark, checkedTrackColor = CyanAccent)
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color.DarkGray)
+
+            Text(text = "Proactivity", color = Color.White, fontSize = 14.sp)
+            Text(
+                text = "How much the daily briefing does on its own. J.A.X. never changes your data in the background.",
+                color = Color.Gray,
+                fontSize = 11.sp
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PROACTIVITY_OPTIONS.forEach { (level, label) ->
+                    val selected = level == proactiveAutonomyLevel
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (selected) CyanAccent else PureDark,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .clickable { onChangeProactiveAutonomyLevel(level) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(label, color = if (selected) PureDark else Color.White, fontSize = 12.sp)
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -590,6 +619,13 @@ private fun DiagnosticRow(label: String, value: String) {
         )
     }
 }
+
+// ASK/ACT are reserved until proactive actions have an approval flow; they are not offered yet.
+private val PROACTIVITY_OPTIONS = listOf(
+    AutonomyLevel.OFF to "Off",
+    AutonomyLevel.NOTIFY to "Notify",
+    AutonomyLevel.RECOMMEND to "Recommend"
+)
 
 @Preview(showBackground = true, name = "Settings Screen Preview")
 @Composable

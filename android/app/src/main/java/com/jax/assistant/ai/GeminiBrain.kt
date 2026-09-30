@@ -2,6 +2,7 @@ package com.jax.assistant.ai
 
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import java.util.UUID
 
@@ -42,6 +43,8 @@ class GeminiBrain(
             // Parse response safely
             parseJsonResponse(responseText, input)
                 ?: JaxParseResult.QuestionResult("Understood, Jagadeesh.")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: AIException) {
             JaxParseResult.QuestionResult(e.error.userFriendlyMessage)
         } catch (e: Exception) {

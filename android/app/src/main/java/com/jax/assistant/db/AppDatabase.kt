@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FactEmbeddingEntity::class,
         ConsolidatedRunEntity::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -157,18 +157,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Some v10 installs were built with a redundant fact_embeddings index and some without,
+        // which gave them different schema hashes (Room crashes on open). Converge both.
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP INDEX IF EXISTS `index_fact_embeddings_factId`")
+            }
+        }
+
+        // Some test APKs were built at version 11 before the redundant index was removed.
+        // Bump once more so those already-stamped databases are repaired and revalidated.
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP INDEX IF EXISTS `index_fact_embeddings_factId`")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+                INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     com.jax.assistant.config.AppConfig.DATABASE_NAME
-                ).addMigrations(
-                    MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
                 )
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                        MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
+                        MIGRATION_11_12
+                    )
+                    // Installing an older APK over a newer DB would otherwise crash on open.
+                    .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
-                INSTANCE = instance
-                instance
+                    .also { INSTANCE = it }
             }
         }
     }

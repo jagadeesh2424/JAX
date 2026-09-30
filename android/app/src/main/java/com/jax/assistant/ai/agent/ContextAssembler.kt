@@ -21,17 +21,8 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         userProfile: String = "",
         learnedWorkflows: List<String> = emptyList()
     ): AssembledContext {
-        val facts = if (relevantFacts.isEmpty()) "None" else boundedLines(
-            relevantFacts.map { "- [${it.category}] ${it.title}: ${it.details}" },
-            FACTS_BUDGET
-        )
-
-        val tasks = if (openTasks.isEmpty()) "None" else boundedLines(
-            openTasks.map {
-                "- (${it.id}) [${it.priority}] ${it.title}" + (it.deadline?.let { d -> " due $d" } ?: "")
-            },
-            TASKS_BUDGET
-        )
+        val facts = if (relevantFacts.isEmpty()) "None" else boundedLines(relevantFacts.map(::factLine), FACTS_BUDGET)
+        val tasks = if (openTasks.isEmpty()) "None" else boundedLines(openTasks.map(::taskLine), TASKS_BUDGET)
 
         val convo = if (conversationSummary.isBlank()) "" else
             "\nRECENT CONVERSATION:\n${truncate(conversationSummary, CONVERSATION_BUDGET)}"
@@ -54,23 +45,17 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         return AssembledContext(truncate(text, TOTAL_CONTEXT_BUDGET))
     }
 
-    // Fast response mode: reduced context for quicker latency (30-40% faster)
-    // Used for follow-up messages or time-sensitive interactions
+    // Reduced context for latency-sensitive turns: top 3 facts/tasks and a shorter dialogue tail.
     fun buildFast(
         relevantFacts: List<FactEntity>,
         openTasks: List<TaskEntity>,
         conversationSummary: String,
         currentDate: String
     ): AssembledContext {
-        val facts = if (relevantFacts.isEmpty()) "None" else boundedLines(
-            relevantFacts.take(3),  // Top 3 facts only
-            FACTS_BUDGET_FAST
-        )
-
-        val tasks = if (openTasks.isEmpty()) "None" else boundedLines(
-            openTasks.take(3),  // Top 3 tasks only
-            TASKS_BUDGET_FAST
-        )
+        val facts = if (relevantFacts.isEmpty()) "None" else
+            boundedLines(relevantFacts.take(3).map(::factLine), FACTS_BUDGET_FAST)
+        val tasks = if (openTasks.isEmpty()) "None" else
+            boundedLines(openTasks.take(3).map(::taskLine), TASKS_BUDGET_FAST)
 
         val convo = if (conversationSummary.isBlank()) "" else
             "\nRECENT:\n${truncate(conversationSummary, CONVERSATION_BUDGET_FAST)}"
@@ -86,6 +71,11 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
 
         return AssembledContext(truncate(text, TOTAL_CONTEXT_BUDGET_FAST))
     }
+
+    private fun factLine(fact: FactEntity) = "- [${fact.category}] ${fact.title}: ${fact.details}"
+
+    private fun taskLine(task: TaskEntity) =
+        "- (${task.id}) [${task.priority}] ${task.title}" + (task.deadline?.let { " due $it" } ?: "")
 
     private fun boundedLines(lines: List<String>, budget: Int): String {
         val selected = mutableListOf<String>()
@@ -110,13 +100,12 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         const val WORKFLOWS_BUDGET = 450
         const val CONVERSATION_BUDGET = 700
         const val ITEM_BUDGET = 500
-        
-        // Fast mode budgets (30-40% smaller context = 30-40% faster response)
+
         const val TOTAL_CONTEXT_BUDGET_FAST = 2_500
         const val FACTS_BUDGET_FAST = 1_100
         const val TASKS_BUDGET_FAST = 500
         const val CONVERSATION_BUDGET_FAST = 300
-        
+
         const val ELLIPSIS = "..."
     }
 }

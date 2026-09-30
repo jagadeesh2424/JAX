@@ -112,6 +112,22 @@ class NotesRepository(private val db: AppDatabase) {
         touchPage(block.pageId)
     }
 
+    // Column-level writes: editing text never overwrites a concurrent checkbox/type change.
+    suspend fun updateBlockContent(block: NoteBlockEntity, content: String) {
+        noteDao.updateBlockContent(block.id, content)
+        touchPage(block.pageId)
+    }
+
+    suspend fun setBlockChecked(block: NoteBlockEntity, checked: Boolean) {
+        noteDao.updateBlockChecked(block.id, checked)
+        touchPage(block.pageId)
+    }
+
+    suspend fun setBlockType(block: NoteBlockEntity, type: String) {
+        noteDao.updateBlockType(block.id, type)
+        touchPage(block.pageId)
+    }
+
     suspend fun deleteBlock(block: NoteBlockEntity) {
         noteDao.deleteBlock(block)
         touchPage(block.pageId)

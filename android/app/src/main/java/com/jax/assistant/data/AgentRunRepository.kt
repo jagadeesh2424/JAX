@@ -84,7 +84,11 @@ class AgentRunRepository(private val dao: AgentRunDao) {
             reply = reply,
             toolsUsed = toolsUsed.joinToString(","),
             currentStep = 0,
-            recoveryState = if (status == "COMPLETED") "Completed" else "Completed with errors",
+            recoveryState = when (status) {
+                "COMPLETED" -> "Completed"
+                "FAILED" -> "Failed: ${reply.take(200)}"
+                else -> "Completed with errors"
+            },
             finishedAt = finishedAt
         )
     }

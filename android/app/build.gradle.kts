@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.gms.google-services") version "4.5.0"
 }
@@ -42,9 +43,6 @@ android {
         compose = true
         buildConfig = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
-    }
     packaging {
         resources {
             excludes += "/META-INDEX"
@@ -81,9 +79,6 @@ dependencies {
     // WorkManager Daily Agent
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
-    // Gemini Android SDK (com.google.ai.client.generativeai)
-    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
-
     // Kotlin Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
@@ -103,4 +98,6 @@ dependencies {
 
     // JVM unit tests
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM tests; android.jar only ships stubs that return defaults.
+    testImplementation("org.json:json:20240303")
 }

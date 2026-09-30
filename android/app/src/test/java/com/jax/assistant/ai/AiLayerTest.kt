@@ -587,9 +587,10 @@ class AiLayerTest {
             TaskEntity("2", "Due today", "Work", "MED", "2026-09-01")
         )
         val suggestions = ProactiveInsightEngine().suggest(tasks, today, AutonomyLevel.RECOMMEND)
-        assertEquals(1, suggestions.size)
-        assertNotNull(suggestions[0].suggestedAction)
-        assertFalse(suggestions[0].requiresConfirmation)
+        // One suggestion per signal: overdue first, then due today.
+        assertEquals(2, suggestions.size)
+        assertTrue(suggestions[0].observation.contains("overdue"))
+        assertTrue(suggestions.all { it.suggestedAction != null && !it.requiresConfirmation })
     }
 
     @Test
@@ -616,32 +617,32 @@ class AiLayerTest {
         assertTrue(suggestions[0].autoActable)
     }
 
+    // The provider itself needs Firebase + a main looper (instrumented test territory);
+    // its reconnect backoff is a pure function and is verified here.
     @Test
-    fun testGeminiLiveVoiceProviderTrackConnectionState() {
-        var lastActive = false
-        var lastError: String? = null
-        val provider = com.jax.assistant.voice.GeminiLiveVoiceProvider(
-            onInputTranscript = {},
-            onOutputTranscript = {},
-            onActiveChanged = { active -> lastActive = active },
-            onError = { error -> lastError = error }
-        )
-        // Start without Firebase auth should trigger an error state (in actual use, user must sign in).
-        provider.start()
-        // Without mocking Firebase, the provider will report auth error.
-        assertFalse(lastActive)
-        assertNotNull(lastError)
+    fun testLiveReconnectBackoffGrowsAndIsCapped() {
+        val provider = com.jax.assistant.voice.GeminiLiveVoiceProvider
+        var delay = provider.RECONNECT_DELAY_BASE_MS
+        val observed = mutableListOf<Long>()
+        repeat(20) {
+            delay = provider.nextReconnectDelay(delay)
+            observed += delay
+        }
+        assertTrue(observed.zipWithNext().all { (a, b) -> b >= a })
+        assertTrue(observed.first() > provider.RECONNECT_DELAY_BASE_MS)
+        assertEquals(provider.RECONNECT_DELAY_MAX_MS, observed.last())
     }
 
     @Test
-    fun testGeminiLiveVoiceProviderStopsCleanly() {
-        val provider = com.jax.assistant.voice.GeminiLiveVoiceProvider(
-            onInputTranscript = {},
-            onOutputTranscript = {},
-            onActiveChanged = { _ -> },
-            onError = { _ -> }
-        )
-        provider.stop()
-        assertFalse(provider.isActive())
+    fun testContextAssemblerFastModeKeepsTopItemsWithinBudget() {
+        val facts = List(6) { FactEntity("f$it", "Fact $it", "General", "detail $it") }
+        val tasks = List(6) { TaskEntity("t$it", "Task $it", "Work", "HIGH", null) }
+        val context = ContextAssembler().buildFast(facts, tasks, "Jagadeesh: hi", "2026-09-29").text
+
+        assertTrue(context.contains("Fact 0") && context.contains("Fact 2"))
+        assertFalse(context.contains("Fact 3"))
+        assertTrue(context.contains("Task 2"))
+        assertFalse(context.contains("Task 3"))
+        assertTrue(context.length <= 2_500)
     }
 }
