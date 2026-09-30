@@ -9,13 +9,17 @@ import android.provider.AlarmClock
 import android.provider.MediaStore
 import android.provider.Settings
 import java.util.Locale
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 /** Executes [DeviceCommand]s via Android framework intents. Returns a user-facing result message. */
 class DeviceController(private val context: Context) {
 
     fun execute(command: DeviceCommand): String = when (command) {
+        is DeviceCommand.CurrentDateTime -> currentDateTime(command)
         is DeviceCommand.OpenApp -> launchApp(command.appName)
         is DeviceCommand.WebSearch -> webSearch(command.query)
+        is DeviceCommand.Weather -> weather(command.location)
         is DeviceCommand.Dial -> dial(command.number)
         is DeviceCommand.Navigate -> navigate(command.destination)
         is DeviceCommand.SetAlarm -> setAlarm(command.hour, command.minute, command.label)
@@ -61,6 +65,23 @@ class DeviceController(private val context: Context) {
         } else {
             "I couldn't start a web search."
         }
+    }
+
+    private fun currentDateTime(command: DeviceCommand.CurrentDateTime): String {
+        val now = ZonedDateTime.now()
+        val time = now.format(DateTimeFormatter.ofPattern("h:mm a z", Locale.getDefault()))
+        val date = now.format(DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.getDefault()))
+        return when {
+            command.includeDate && command.includeTime -> "It's $time on $date."
+            command.includeDate -> "Today is $date."
+            else -> "It's $time."
+        }
+    }
+
+    private fun weather(location: String?): String {
+        val place = location?.trim().orEmpty()
+        val query = if (place.isBlank()) "current weather today" else "current weather today in $place"
+        return webSearch(query)
     }
 
     private fun dial(number: String): String {

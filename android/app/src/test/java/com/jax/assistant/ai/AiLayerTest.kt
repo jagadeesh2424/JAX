@@ -427,6 +427,7 @@ class AiLayerTest {
                 ToolParam("count", "number", "How many")
             )
             override val isDestructive = false
+            override suspend fun execute(args: JSONObject): ToolResult = ToolResult.ok("created")
         }
         val schema = ToolRegistry(listOf(tool)).toolsJsonSchema()
         assertEquals(1, schema.length())

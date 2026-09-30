@@ -316,6 +316,7 @@ class MainActivity : ComponentActivity() {
         if (input.isBlank()) return
         val command = DeviceCommandParser.parse(input)
         if (command != null) {
+            android.util.Log.d("IntentRouter", "intent=${command::class.simpleName} execution=DeviceController geminiCall=false")
             val reply = deviceController.execute(command)
             viewModel.logAssistantAction(input, reply)
             if (viewModel.voiceResponsesEnabled.value) voiceManager.speak(reply)
