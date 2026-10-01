@@ -15,10 +15,47 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 private const val TAG = "AIRouter"
 
+data class ProviderUsageSnapshot(
+    val requestCount: Int,
+    val totalTokens: Int,
+    val rateLimitCount: Int,
+    val errorCount: Int,
+    val averageLatencyMs: Long
+)
+
+private class MutableProviderUsage {
+    var requestCount = 0
+    var totalTokens = 0
+    var rateLimitCount = 0
+    var errorCount = 0
+    var totalLatencyMs = 0L
+
+    @Synchronized
+    fun record(latencyMs: Long, attempt: ModelAttempt) {
+        requestCount++
+        totalTokens += attempt.response?.usage?.total ?: 0
+        totalLatencyMs += latencyMs
+        if (!attempt.isSuccess) errorCount++
+        if (attempt.errorCategory == ProviderErrorCategory.RATE_LIMITED ||
+            attempt.errorCategory == ProviderErrorCategory.QUOTA_EXCEEDED
+        ) rateLimitCount++
+    }
+
+    @Synchronized
+    fun snapshot() = ProviderUsageSnapshot(
+        requestCount,
+        totalTokens,
+        rateLimitCount,
+        errorCount,
+        if (requestCount == 0) 0L else totalLatencyMs / requestCount
+    )
+}
+
 class AIRouter(
     context: Context? = null,
     private val restClient: ModelClient = GeminiRestClient(),
     private val firebaseClient: ModelClient = FirebaseAiClient(),
+    private val groqClient: ModelClient = GroqModelClient(),
     // Replaceable so routing and fallback are unit-tested without network discovery.
     private val discoverModels: suspend (apiKey: String) -> List<ModelInfo> = { key -> ModelCatalog.discoverModels(key) }
 ) {
@@ -32,6 +69,8 @@ class AIRouter(
     private val discoveryLock = Mutex()
     private val _requestLogs = MutableStateFlow<List<RequestLog>>(emptyList())
     val requestLogs: StateFlow<List<RequestLog>> = _requestLogs.asStateFlow()
+    private val providerCooldowns = ConcurrentHashMap<String, Long>()
+    private val providerUsage = ConcurrentHashMap<String, MutableProviderUsage>()
 
     @Volatile
     private var activeModel: String = AppConfig.DEFAULT_MODEL
@@ -59,6 +98,8 @@ class AIRouter(
     fun getModels(): List<ModelInfo> = models.toList()
 
     fun getActiveModel(): String = activeModel
+
+    fun getProviderUsage(): Map<String, ProviderUsageSnapshot> = providerUsage.mapValues { (_, value) -> value.snapshot() }
 
     suspend fun ensureModelDiscovery(apiKey: String, force: Boolean = false) {
         if (apiKey.isBlank()) return
@@ -99,26 +140,64 @@ class AIRouter(
         apiKey: String,
         requestedModel: String = "",
         capability: TaskCapability = TaskCapability.GENERAL_CONVERSATION,
-        requireJson: Boolean = true
+        requireJson: Boolean = true,
+        groqApiKey: String = "",
+        groqModel: String = AppConfig.DEFAULT_GROQ_MODEL,
+        groqEnabled: Boolean = false
     ): String = routeRequest(
         ModelRequest(messages = listOf(ModelMessage.user(prompt)), json = requireJson),
         apiKey,
         requestedModel,
-        capability
+        capability,
+        groqApiKey = groqApiKey,
+        groqModel = groqModel,
+        groqEnabled = groqEnabled
     ).text
 
-    // True when the configured backend can run Gemini's native function calling for this key.
-    fun nativeToolsAvailable(apiKey: String): Boolean = primaryClient(apiKey, needsTools = true).supportsTools
+    // True when the configured backend can run native function calling for this configuration.
+    fun nativeToolsAvailable(
+        apiKey: String,
+        groqApiKey: String = "",
+        groqModel: String = AppConfig.DEFAULT_GROQ_MODEL,
+        groqEnabled: Boolean = false
+    ): Boolean = providerTargets(true, apiKey, groqApiKey, groqModel, groqEnabled).firstOrNull()?.client?.supportsTools == true
 
-    fun backendName(apiKey: String): String = primaryClient(apiKey, needsTools = false).name
+    fun backendName(
+        apiKey: String,
+        groqApiKey: String = "",
+        groqModel: String = AppConfig.DEFAULT_GROQ_MODEL,
+        groqEnabled: Boolean = false
+    ): String = providerTargets(false, apiKey, groqApiKey, groqModel, groqEnabled).firstOrNull()?.client?.name
+        ?: "No AI provider configured"
 
-    private fun primaryClient(apiKey: String, needsTools: Boolean): ModelClient = when (backend) {
-        AiBackend.FIREBASE -> firebaseClient
-        AiBackend.DIRECT -> restClient
-        AiBackend.AUTO -> when {
-            needsTools && apiKey.isNotBlank() -> restClient
-            firebaseUnavailable && apiKey.isNotBlank() -> restClient
-            else -> firebaseClient
+    private data class ProviderTarget(val client: ModelClient, val modelId: String, val apiKey: String)
+
+    private fun providerTargets(
+        needsTools: Boolean,
+        apiKey: String,
+        groqApiKey: String,
+        groqModel: String,
+        groqEnabled: Boolean,
+        requestedModel: String = ""
+    ): List<ProviderTarget> {
+        val geminiModel = requestedModel.ifBlank { activeModel }
+        val firebase = ProviderTarget(firebaseClient, geminiModel, "")
+        val direct = ProviderTarget(restClient, geminiModel, apiKey)
+        val groq = ProviderTarget(groqClient, groqModel.ifBlank { AppConfig.DEFAULT_GROQ_MODEL }, groqApiKey)
+        fun usable(target: ProviderTarget): Boolean =
+            (!target.client.requiresApiKey || target.apiKey.isNotBlank()) &&
+                (!needsTools || target.client.supportsTools) &&
+                (providerCooldowns[target.client.name] ?: 0L) <= System.currentTimeMillis()
+
+        return when (backend) {
+            AiBackend.FIREBASE -> listOf(firebase)
+            AiBackend.DIRECT -> listOf(direct)
+            AiBackend.GROQ -> listOf(groq)
+            AiBackend.AUTO -> listOf(firebase, direct, groq).filterIndexed { index, target ->
+                if (index == 0 && firebaseUnavailable) false
+                else if (index == 2 && !groqEnabled) false
+                else usable(target)
+            }
         }
     }
 
@@ -129,7 +208,10 @@ class AIRouter(
         apiKey: String,
         requestedModel: String = "",
         capability: TaskCapability = TaskCapability.GENERAL_CONVERSATION,
-        onText: ((String) -> Unit)? = null
+        onText: ((String) -> Unit)? = null,
+        groqApiKey: String = "",
+        groqModel: String = AppConfig.DEFAULT_GROQ_MODEL,
+        groqEnabled: Boolean = false
     ): ModelResponse {
         ensureModelDiscovery(apiKey, force = false)
 
@@ -140,40 +222,62 @@ class AIRouter(
             preferredModelId = requestedModel.ifBlank { null }
         )
 
-        var lastHttpStatus: Int? = null
-        var lastErrorCode: String? = null
-        var lastErrorMessage: String? = null
-        var isQuotaExceededOccurred = false
+        var lastAttempt: ModelAttempt? = null
+        val attemptedProviders = mutableListOf<String>()
         var attemptCount = 0
 
-        // A transient failure should not make the user wait through every discovered model.
-        // Keep one fallback for a selected model and two for automatic routing.
-        val maxCandidates = if (requestedModel.isNotBlank()) 2 else 3
-        for (candidate in candidateModels.take(maxCandidates)) {
-            var client = primaryClient(apiKey, needsTools = request.tools.isNotEmpty())
+        // One attempt per provider per request. The provider order is the resilience policy;
+        // model discovery still chooses the best Gemini model for the Gemini targets.
+        val targets = providerTargets(
+            needsTools = request.tools.isNotEmpty(),
+            apiKey = apiKey,
+            groqApiKey = groqApiKey,
+            groqModel = groqModel,
+            groqEnabled = groqEnabled,
+            requestedModel = requestedModel
+        )
+        val selectedGeminiModel = candidateModels.firstOrNull()?.id ?: requestedModel.ifBlank { activeModel }
+        val resolvedTargets = targets.map { target ->
+            if (target.client === groqClient) target else target.copy(modelId = selectedGeminiModel)
+        }
+        for (target in resolvedTargets) {
+            val client = target.client
             attemptCount++
             val startTime = System.currentTimeMillis()
-            Log.d(TAG, "[Attempt $attemptCount] Routing request via model '${candidate.id}' (${client.name})")
+            val fallbackFrom = attemptedProviders.lastOrNull()
+            Log.d(TAG, "[Attempt $attemptCount] Routing request via model '${target.modelId}' (${client.name})")
 
-            var attempt = client.generate(request.copy(model = candidate.id), apiKey, onText)
-            if (!attempt.isSuccess && attempt.errorCode == ModelAttempt.BACKEND_NOT_CONFIGURED &&
-                backend == AiBackend.AUTO && client === firebaseClient && apiKey.isNotBlank()
-            ) {
-                Log.w(TAG, "Firebase AI Logic unavailable; falling back to the Gemini API for this session.")
-                firebaseUnavailable = true
-                client = restClient
-                attempt = client.generate(request.copy(model = candidate.id), apiKey, onText)
-            }
+            val attempt = client.generate(request.copy(model = target.modelId), target.apiKey, onText)
             val latency = System.currentTimeMillis() - startTime
+            recordProviderUsage(client.name, latency, attempt)
+            recordProviderTrace(
+                provider = client.name,
+                model = target.modelId,
+                latencyMs = latency,
+                fallbackFrom = fallbackFrom,
+                fallbackReason = lastAttempt?.errorCategory?.name,
+                attempt = attempt,
+                capability = capability
+            )
+            attemptedProviders += client.name
+
+            if (!attempt.isSuccess && attempt.errorCategory == ProviderErrorCategory.BACKEND_NOT_CONFIGURED &&
+                backend == AiBackend.AUTO && client === firebaseClient
+            ) {
+                Log.w(TAG, "Firebase AI Logic is unavailable; trying the next configured provider.")
+                firebaseUnavailable = true
+            }
             val response = attempt.response
 
             if (response != null) {
-                activeModel = candidate.id
-                updateModelSuccess(candidate, latency, now)
+                if (client !== groqClient) {
+                    models.find { it.id == target.modelId }?.let { updateModelSuccess(it, latency, now) }
+                }
+                providerCooldowns.remove(client.name)
                 logRequest(
                     RequestLog(
                         timestamp = now,
-                        modelUsed = candidate.id,
+                        modelUsed = target.modelId,
                         provider = client.name,
                         latencyMs = latency,
                         httpStatus = attempt.httpStatus ?: 200,
@@ -182,7 +286,15 @@ class AIRouter(
                         retryCount = attemptCount - 1,
                         isSuccess = true,
                         promptTokens = response.usage.promptTokens,
-                        outputTokens = response.usage.outputTokens
+                        outputTokens = response.usage.outputTokens,
+                        fallbackFrom = fallbackFrom,
+                        fallbackReason = lastAttempt?.errorCategory?.name,
+                        errorCategory = ProviderErrorCategory.NONE,
+                        route = capability.name,
+                        routingReason = if (fallbackFrom == null) "AUTO mode — primary conversational provider"
+                        else "Fallback after ${lastAttempt?.errorCategory?.name ?: "provider failure"}",
+                        fallbackChain = (attemptedProviders + client.name).distinct().joinToString(" → "),
+                        modelCallCount = attemptCount
                     )
                 )
                 healthStore?.saveModels(models)
@@ -190,92 +302,84 @@ class AIRouter(
                 return response
             }
 
-            lastHttpStatus = attempt.httpStatus
-            lastErrorCode = attempt.errorCode
-            lastErrorMessage = attempt.errorMessage
-            if (attempt.httpStatus == 429 || attempt.errorCode == "QUOTA_EXCEEDED" || attempt.errorCode == "RESOURCE_EXHAUSTED") {
-                isQuotaExceededOccurred = true
+            val previousFailureReason = lastAttempt?.errorCategory?.name
+            lastAttempt = attempt
+            if (client !== groqClient) {
+                models.find { it.id == target.modelId }?.let { model ->
+                    if (attempt.errorCategory !in NOT_MODEL_FAULTS) updateModelFailure(model, attempt.httpStatus, attempt.errorMessage, now)
+                }
             }
-
-            // A key/backend error says nothing about this model's health, so it is not penalized.
-            val modelFault = attempt.httpStatus != 401 && attempt.errorCode !in NOT_MODEL_FAULTS
-            if (modelFault) updateModelFailure(candidate, attempt.httpStatus, attempt.errorMessage, now)
+            markProviderFailure(client.name, attempt.errorCategory, now)
             logRequest(
                 RequestLog(
                     timestamp = now,
-                    modelUsed = candidate.id,
+                    modelUsed = target.modelId,
                     provider = client.name,
                     latencyMs = latency,
                     httpStatus = attempt.httpStatus,
                     errorCode = attempt.errorCode,
-                    errorMessage = attempt.errorMessage,
+                    errorMessage = safeError(attempt.errorMessage),
                     retryCount = attemptCount - 1,
-                    isSuccess = false
+                    isSuccess = false,
+                    fallbackFrom = fallbackFrom,
+                    fallbackReason = previousFailureReason,
+                    errorCategory = attempt.errorCategory,
+                    route = capability.name,
+                    routingReason = if (fallbackFrom == null) "AUTO mode — primary conversational provider"
+                    else "Fallback after ${previousFailureReason ?: "provider failure"}",
+                    fallbackChain = (attemptedProviders + client.name).distinct().joinToString(" → "),
+                    modelCallCount = attemptCount
                 )
             )
             healthStore?.saveModels(models)
 
-            // Key or backend problems affect every model: fail fast instead of trying others.
-            if (attempt.httpStatus == 401 || attempt.errorCode == "INVALID_API_KEY" || attempt.errorCode == "MISSING_API_KEY") {
-                throw AIException(AIError.InvalidApiKey)
-            }
-            if (attempt.errorCode == ModelAttempt.BACKEND_NOT_CONFIGURED) {
-                throw AIException(AIError.UnknownError(
-                    "Firebase AI Logic is not set up for this app. Enable it in the Firebase console, or add a Gemini API key in Settings."
-                ))
-            }
-            if (attempt.errorCode == ModelAttempt.TOOLS_UNSUPPORTED) {
-                throw AIException(AIError.UnknownError("The selected AI backend cannot run tools."))
-            }
+            // Permanent request/safety failures are not provider fallbacks. Retryable provider
+            // failures continue to the next independently configured target exactly once.
+            if (attempt.errorCategory in setOf(
+                    ProviderErrorCategory.INVALID_REQUEST,
+                    ProviderErrorCategory.SAFETY_REJECTION,
+                    ProviderErrorCategory.TOOLS_UNSUPPORTED
+                )
+            ) break
         }
 
         val finalError = when {
-            isQuotaExceededOccurred || lastHttpStatus == 429 -> AIError.QuotaExceeded
-            lastHttpStatus == 404 -> AIError.ModelNotFound
-            lastHttpStatus == 408 || lastErrorCode == ModelAttempt.TIMEOUT -> AIError.Timeout
-            lastErrorCode == ModelAttempt.NETWORK -> AIError.NetworkError
-            else -> AIError.UnknownError(lastErrorMessage ?: "All available AI models failed to respond.")
+            lastAttempt == null && backend == AiBackend.GROQ -> AIError.InvalidApiKey
+            lastAttempt?.errorCategory == ProviderErrorCategory.INVALID_REQUEST -> AIError.UnknownError("The AI request was invalid and was not retried.")
+            lastAttempt?.errorCategory == ProviderErrorCategory.SAFETY_REJECTION -> AIError.UnknownError("The request was blocked by a provider safety policy.")
+            lastAttempt?.errorCategory == ProviderErrorCategory.TOOLS_UNSUPPORTED -> AIError.UnknownError("No configured provider can run the requested tools.")
+            attemptedProviders.size >= 2 && attemptedProviders.contains("Groq") && lastAttempt != null -> AIError.GeminiAndGroqUnavailable
+            lastAttempt?.errorCategory == ProviderErrorCategory.QUOTA_EXCEEDED || lastAttempt?.errorCategory == ProviderErrorCategory.RATE_LIMITED -> AIError.QuotaExceeded
+            lastAttempt?.errorCategory == ProviderErrorCategory.MODEL_UNAVAILABLE -> AIError.ModelNotFound
+            lastAttempt?.errorCategory == ProviderErrorCategory.TIMEOUT -> AIError.Timeout
+            lastAttempt?.errorCategory == ProviderErrorCategory.NETWORK_ERROR -> AIError.NetworkError
+            lastAttempt?.errorCategory == ProviderErrorCategory.AUTHENTICATION_ERROR -> AIError.InvalidApiKey
+            lastAttempt?.errorCategory == ProviderErrorCategory.BACKEND_NOT_CONFIGURED -> AIError.UnknownError(
+                "Firebase AI Logic is not set up for this app. Enable it in Firebase, or configure Gemini/Groq in Settings."
+            )
+            else -> AIError.ProvidersUnavailable
         }
         throw AIException(finalError)
     }
 
-    suspend fun testConnection(apiKey: String, modelName: String = ""): TestConnectionResult {
-        if (primaryClient(apiKey, needsTools = false) === firebaseClient) {
-            return try {
-                val response = routeRequest(
-                    ModelRequest(messages = listOf(ModelMessage.user("Respond with 'OK' to verify connection."))),
-                    apiKey,
-                    modelName
-                )
-                TestConnectionResult(true, "${response.backend} connected (model '${response.modelId}').")
-            } catch (e: AIException) {
-                TestConnectionResult(false, e.error.userFriendlyMessage)
-            }
-        }
-        ensureModelDiscovery(apiKey, force = false)
-        val targetModel = modelName.ifBlank { activeModel }
-        val provider = providers["Gemini"] ?: return TestConnectionResult(false, "Gemini provider unavailable.")
-
-        val startTime = System.currentTimeMillis()
-        val result = provider.testConnection(targetModel, apiKey)
-        val latency = System.currentTimeMillis() - startTime
-
-        val candidate = models.find { it.id.equals(targetModel, ignoreCase = true) }
-        if (candidate != null) {
-            if (result.isSuccess) {
-                updateModelSuccess(candidate, latency, System.currentTimeMillis())
-            } else {
-                candidate.failureCount++
-                candidate.lastFailure = System.currentTimeMillis()
-                if (result.message.contains("404")) {
-                    candidate.enabled = false
-                    candidate.exclusionReason = "HTTP 404: Removed immediately"
-                }
-            }
-            healthStore?.saveModels(models)
-        }
-
-        return result
+    suspend fun testConnection(
+        apiKey: String,
+        modelName: String = "",
+        groqApiKey: String = "",
+        groqModel: String = AppConfig.DEFAULT_GROQ_MODEL,
+        groqEnabled: Boolean = false
+    ): TestConnectionResult = try {
+        val response = routeRequest(
+            ModelRequest(messages = listOf(ModelMessage.user("Respond with 'OK' to verify connection."))),
+            apiKey,
+            modelName,
+            groqApiKey = groqApiKey,
+            groqModel = groqModel,
+            groqEnabled = groqEnabled
+        )
+        TestConnectionResult(true, "${response.backend} connected (model '${response.modelId}').")
+    } catch (e: AIException) {
+        TestConnectionResult(false, e.error.userFriendlyMessage)
     }
 
     suspend fun performHealthCheck(apiKey: String): String {
@@ -340,10 +444,59 @@ class AIRouter(
         _requestLogs.update { current -> (listOf(logEntry) + current).take(MAX_REQUEST_LOGS) }
     }
 
+    // Pipeline-level summaries share the same bounded request log as provider attempts. They are
+    // intentionally metadata-only and are not persisted beyond the current app process.
+    fun recordRequestLog(logEntry: RequestLog) = logRequest(logEntry)
+
+    private fun recordProviderUsage(provider: String, latencyMs: Long, attempt: ModelAttempt) {
+        providerUsage.getOrPut(provider) { MutableProviderUsage() }.record(latencyMs, attempt)
+    }
+
+    private suspend fun recordProviderTrace(
+        provider: String,
+        model: String,
+        latencyMs: Long,
+        fallbackFrom: String?,
+        fallbackReason: String?,
+        attempt: ModelAttempt,
+        capability: TaskCapability
+    ) {
+        currentCoroutineContext()[ProviderTraceRecorder]?.record(
+            ProviderAttemptTrace(
+                provider = provider,
+                model = model,
+                route = capability.name,
+                fallbackFrom = fallbackFrom,
+                fallbackReason = fallbackReason,
+                latencyMs = latencyMs,
+                usage = attempt.response?.usage ?: TokenUsage(),
+                success = attempt.isSuccess,
+                errorCategory = attempt.errorCategory
+            )
+        )
+    }
+
+    private fun markProviderFailure(provider: String, category: ProviderErrorCategory, now: Long) {
+        val cooldown = when (category) {
+            ProviderErrorCategory.RATE_LIMITED, ProviderErrorCategory.QUOTA_EXCEEDED -> 60_000L
+            ProviderErrorCategory.TIMEOUT -> 30_000L
+            ProviderErrorCategory.NETWORK_ERROR, ProviderErrorCategory.SERVER_ERROR -> 15_000L
+            ProviderErrorCategory.BACKEND_NOT_CONFIGURED -> 60_000L
+            else -> 0L
+        }
+        if (cooldown > 0L) providerCooldowns[provider] = now + cooldown
+    }
+
+    private fun safeError(message: String?): String? = message?.replace(
+        Regex("(?i)(?:gsk_|AIza)[A-Za-z0-9_\\-]+"), "REDACTED"
+    )
+
     private companion object {
         const val MAX_REQUEST_LOGS = 30
         val NOT_MODEL_FAULTS = setOf(
-            "INVALID_API_KEY", "MISSING_API_KEY", ModelAttempt.BACKEND_NOT_CONFIGURED, ModelAttempt.TOOLS_UNSUPPORTED
+            ProviderErrorCategory.AUTHENTICATION_ERROR,
+            ProviderErrorCategory.BACKEND_NOT_CONFIGURED,
+            ProviderErrorCategory.TOOLS_UNSUPPORTED
         )
     }
 }

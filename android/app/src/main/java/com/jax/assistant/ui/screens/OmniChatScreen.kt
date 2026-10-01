@@ -35,6 +35,7 @@ import com.jax.assistant.ui.theme.GoldAccent
 import com.jax.assistant.ui.theme.JAXAssistantTheme
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
+import com.jax.assistant.ui.MarkdownRenderer
 
 data class ComposeChatMessage(
     val id: String,
@@ -124,11 +125,11 @@ fun OmniChatScreen(
                             .background(if (msg.isUser) CyanAccent.copy(alpha = 0.2f) else SurfaceDark)
                             .padding(14.dp)
                     ) {
-                        Text(
-                            text = msg.text,
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
+                        if (msg.isUser) {
+                            Text(text = msg.text, color = Color.White, fontSize = 14.sp)
+                        } else {
+                            Text(text = MarkdownRenderer.render(msg.text), color = Color.White, fontSize = 14.sp)
+                        }
                     }
                 }
             }
@@ -142,7 +143,7 @@ fun OmniChatScreen(
                                 .background(SurfaceDark)
                                 .padding(14.dp)
                         ) {
-                            Text(text = streamingReply, color = Color.White, fontSize = 14.sp)
+                            Text(text = MarkdownRenderer.render(streamingReply), color = Color.White, fontSize = 14.sp)
                         }
                     }
                 }

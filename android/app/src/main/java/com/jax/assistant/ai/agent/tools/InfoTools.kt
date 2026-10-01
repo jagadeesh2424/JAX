@@ -102,7 +102,10 @@ data class WeatherSnapshot(
     val maxTempC: Double,
     val minTempC: Double,
     val rainChancePercent: Int,
-    val fetchedAtMillis: Long
+    val fetchedAtMillis: Long,
+    val city: String = location.substringBefore(",").trim(),
+    val region: String = "",
+    val country: String = ""
 )
 
 // Live weather from Open-Meteo (free, no API key). Location comes from the request; when absent
@@ -113,10 +116,12 @@ class WeatherClient(
 ) {
     suspend fun fetch(location: String, dayOffset: Int): WeatherSnapshot {
         val place = location.trim().ifBlank { AppConfig.DEFAULT_WEATHER_LOCATION }
-        val geo = JSONObject(http(GEOCODE_URL + URLEncoder.encode(place, "UTF-8")))
-        val hit = geo.optJSONArray("results")?.optJSONObject(0)
+        val hit = resolveLocation(place)
             ?: throw IllegalArgumentException("I couldn't find a place called \"$place\".")
-        val resolvedName = listOf(hit.optString("name"), hit.optString("country"))
+        val city = hit.optString("name").trim()
+        val region = hit.optString("admin1").trim()
+        val country = hit.optString("country").trim()
+        val resolvedName = listOf(city, region, country)
             .filter { it.isNotBlank() }.joinToString(", ")
 
         val forecast = JSONObject(http(
@@ -138,12 +143,69 @@ class WeatherClient(
             maxTempC = daily.getJSONArray("temperature_2m_max").getDouble(index),
             minTempC = daily.getJSONArray("temperature_2m_min").getDouble(index),
             rainChancePercent = daily.getJSONArray("precipitation_probability_max").optInt(index, 0),
-            fetchedAtMillis = clock()
+            fetchedAtMillis = clock(),
+            city = city,
+            region = region,
+            country = country
         )
     }
 
+    private suspend fun resolveLocation(place: String): JSONObject? {
+        val alias = knownAlias(place)
+        val first = geocode(alias?.query ?: place, alias?.countryCode)
+        if (alias == null || first == null || isIndia(first)) return first
+
+        // Open-Meteo should honor countryCode, but keep a validation guard because a provider
+        // response must never silently turn Bangalore into a same-named city in another country.
+        val corrected = geocode("Bengaluru", "IN")
+        return corrected?.takeIf(::isIndia)
+    }
+
+    private suspend fun geocode(query: String, countryCode: String?): JSONObject? {
+        val params = buildString {
+            append(GEOCODE_URL)
+            append(URLEncoder.encode(query, "UTF-8"))
+            countryCode?.let { append("&countryCode=").append(it) }
+        }
+        val results = JSONObject(http(params)).optJSONArray("results") ?: return null
+        if (results.length() == 0) return null
+        val preferredCountry = countryCode?.uppercase(Locale.US)
+        return (0 until results.length())
+            .mapNotNull { results.optJSONObject(it) }
+            .filter { preferredCountry == null || it.optString("country_code").equals(preferredCountry, true) ||
+                (preferredCountry == "IN" && it.optString("country").equals("India", true)) }
+            .maxByOrNull { score(it, query, preferredCountry) }
+            ?: results.optJSONObject(0)
+    }
+
+    private fun score(hit: JSONObject, query: String, preferredCountry: String?): Int {
+        val name = hit.optString("name").trim()
+        val normalizedName = normalize(name)
+        val normalizedQuery = normalize(query)
+        var score = 0
+        if (normalizedName == normalizedQuery) score += 1_000
+        if (preferredCountry != null && hit.optString("country_code").equals(preferredCountry, true)) score += 500
+        if (preferredCountry == "IN" && hit.optString("country").equals("India", true)) score += 400
+        if (hit.optString("admin1").equals("Karnataka", true)) score += 250
+        score += (hit.optDouble("population", 0.0) / 1_000_000.0).toInt().coerceAtMost(100)
+        return score
+    }
+
+    private fun knownAlias(place: String): LocationAlias? = when (normalize(place)) {
+        "bangalore", "bengaluru" -> LocationAlias("Bengaluru", "IN")
+        else -> null
+    }
+
+    private fun isIndia(hit: JSONObject): Boolean =
+        hit.optString("country_code").equals("IN", true) || hit.optString("country").equals("India", true)
+
+    private fun normalize(value: String): String =
+        value.lowercase(Locale.US).replace(Regex("[^a-z0-9]"), "")
+
+    private data class LocationAlias(val query: String, val countryCode: String)
+
     companion object {
-        private const val GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search?count=1&name="
+        private const val GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search?count=10&name="
         private const val FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
         // WMO weather interpretation codes, grouped.
@@ -190,6 +252,9 @@ class WeatherTool(
             message,
             JSONObject()
                 .put("location", w.location)
+                .put("city", w.city)
+                .put("region", w.region)
+                .put("country", w.country)
                 .put("date", w.date.toString())
                 .put("summary", w.summary)
                 .put("max_c", w.maxTempC)

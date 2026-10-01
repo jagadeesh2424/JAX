@@ -22,6 +22,7 @@ import com.jax.assistant.notify.NotificationPolicy
 import com.jax.assistant.voice.VoiceLatencyTracker
 import com.jax.assistant.voice.VoiceModeSelector
 import com.jax.assistant.voice.VoiceRecovery
+import com.jax.assistant.voice.SpeechTextSanitizer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -191,6 +192,18 @@ class ContextAndServicesTest {
         assertTrue(memory.lookup(EntityType.PLACE) is EntityLookup.Ambiguous)
         val question = ReferenceResolver.resolve("Check the weather there", memory, now).route as Route.Clarify
         assertTrue(question.question.contains("\"Bangkok\"") && question.question.contains("\"Singapore\""))
+    }
+
+    @Test
+    fun currentConversationLocationOverridesStaleLocationForWeatherPronouns() {
+        val memory = WorkingMemory(clock = { 1_000_000L })
+        ConversationTracker.observeUserText(memory, "What's the weather in Bangalore?", today)
+        ConversationTracker.observeUserText(memory, "I'm planning a trip to Singapore.", today)
+
+        val resolution = ReferenceResolver.resolve("What's the weather there?", memory, now)
+
+        assertTrue(resolution.text.contains("Singapore"))
+        assertFalse(resolution.text.contains("Bangalore"))
     }
 
     @Test
@@ -380,6 +393,15 @@ class ContextAndServicesTest {
         assertEquals(VoiceRecovery.Action.RETRY, VoiceRecovery.onRecognizerError(SpeechRecognizer.ERROR_RECOGNIZER_BUSY, 0))
         assertEquals(VoiceRecovery.Action.REPORT, VoiceRecovery.onRecognizerError(SpeechRecognizer.ERROR_NETWORK, 1))
         assertEquals(VoiceRecovery.Action.REPORT, VoiceRecovery.onRecognizerError(SpeechRecognizer.ERROR_NO_MATCH, 0))
+    }
+
+    @Test
+    fun ttsSanitizerRemovesMarkdownControlsButKeepsWords() {
+        val spoken = SpeechTextSanitizer.sanitize("### **Agentic AI**\n- Fast *and* useful\n1. `code`\n[Docs](https://example.com)")
+
+        assertEquals("Agentic AI Fast and useful code Docs", spoken)
+        assertFalse(spoken.contains("**"))
+        assertFalse(spoken.contains("`"))
     }
 
     @Test

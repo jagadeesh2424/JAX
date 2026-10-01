@@ -71,18 +71,28 @@ class FirebaseAiClient : ModelClient {
                     Regex("SERVICE_DISABLED|has not been used in project|API has not been|App Check|PERMISSION_DENIED|API_KEY_INVALID|FirebaseApp is not initialized", RegexOption.IGNORE_CASE)
                         .containsMatchIn(text) ->
                     ModelAttempt(httpStatus = 403, errorCode = ModelAttempt.BACKEND_NOT_CONFIGURED,
-                        errorMessage = "Firebase AI Logic is not set up for this app ($message)")
-                kind.contains("QuotaExceeded") || Regex("RESOURCE_EXHAUSTED|\\b429\\b|quota", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
-                    ModelAttempt(httpStatus = 429, errorCode = "QUOTA_EXCEEDED", errorMessage = message)
+                        errorMessage = "Firebase AI Logic is not set up for this app ($message)",
+                        errorCategory = ProviderErrorCategory.BACKEND_NOT_CONFIGURED)
+                kind.contains("QuotaExceeded") || Regex("RESOURCE_EXHAUSTED|quota", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
+                    ModelAttempt(httpStatus = 429, errorCode = ModelAttempt.QUOTA_EXCEEDED, errorMessage = message,
+                        errorCategory = ProviderErrorCategory.QUOTA_EXCEEDED)
+                Regex("\\b429\\b|rate.?limit", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
+                    ModelAttempt(httpStatus = 429, errorCode = ModelAttempt.RATE_LIMITED, errorMessage = message,
+                        errorCategory = ProviderErrorCategory.RATE_LIMITED)
                 Regex("NOT_FOUND|\\b404\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
-                    ModelAttempt(httpStatus = 404, errorCode = "NOT_FOUND", errorMessage = message)
+                    ModelAttempt(httpStatus = 404, errorCode = "NOT_FOUND", errorMessage = message,
+                        errorCategory = ProviderErrorCategory.MODEL_UNAVAILABLE)
                 kind.contains("PromptBlocked") || kind.contains("ResponseStopped") || kind.contains("ContentBlocked") ->
-                    ModelAttempt(errorCode = "BLOCKED", errorMessage = "The request was blocked by safety filters.")
+                    ModelAttempt(errorCode = "BLOCKED", errorMessage = "The request was blocked by safety filters.",
+                        errorCategory = ProviderErrorCategory.SAFETY_REJECTION)
                 Regex("timed? ?out|Timeout", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
-                    ModelAttempt(httpStatus = 408, errorCode = ModelAttempt.TIMEOUT, errorMessage = message)
+                    ModelAttempt(httpStatus = 408, errorCode = ModelAttempt.TIMEOUT, errorMessage = message,
+                        errorCategory = ProviderErrorCategory.TIMEOUT)
                 Regex("UnknownHost|Unable to resolve host|ConnectException|network", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
-                    ModelAttempt(errorCode = ModelAttempt.NETWORK, errorMessage = message)
-                else -> ModelAttempt(errorCode = "FIREBASE_ERROR", errorMessage = message.ifBlank { kind })
+                    ModelAttempt(errorCode = ModelAttempt.NETWORK, errorMessage = message,
+                        errorCategory = ProviderErrorCategory.NETWORK_ERROR)
+                else -> ModelAttempt(errorCode = "FIREBASE_ERROR", errorMessage = message.ifBlank { kind },
+                    errorCategory = ProviderErrorCategory.UNKNOWN)
             }
         }
     }

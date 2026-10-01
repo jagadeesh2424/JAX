@@ -72,7 +72,11 @@ object ConversationTracker {
     private const val TOOL_CONFIDENCE = 0.95
 
     fun observeUserText(memory: WorkingMemory, text: String, today: LocalDate) {
-        EntityExtractor.extract(text, memory.now(), today).forEach(memory::track)
+        val entities = EntityExtractor.extract(text, memory.now(), today)
+        // Explicit locations in the current turn are authoritative. Keep multiple current-turn
+        // locations so ReferenceResolver can ask for clarification, but discard stale locations.
+        if (entities.any { it.type == EntityType.PLACE }) memory.clear(EntityType.PLACE)
+        entities.forEach(memory::track)
     }
 
     fun observeTool(memory: WorkingMemory, outcome: ToolOutcome) {

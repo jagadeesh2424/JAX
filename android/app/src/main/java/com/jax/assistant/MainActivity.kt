@@ -81,6 +81,9 @@ class MainActivity : ComponentActivity() {
                 val tasks by viewModel.tasks.collectAsState()
                 val facts by viewModel.facts.collectAsState()
                 val apiKey by viewModel.apiKey.collectAsState()
+                val groqApiKey by viewModel.groqApiKey.collectAsState()
+                val groqModel by viewModel.groqModel.collectAsState()
+                val groqEnabled by viewModel.groqEnabled.collectAsState()
                 val selectedModel by viewModel.selectedModel.collectAsState()
                 val developerMode by viewModel.developerMode.collectAsState()
                 val dailyAutomationEnabled by viewModel.dailyAutomationEnabled.collectAsState()
@@ -176,6 +179,12 @@ class MainActivity : ComponentActivity() {
                     onUpdateApiKey = { newKey ->
                         viewModel.updateApiKey(newKey)
                     },
+                    groqApiKey = groqApiKey,
+                    onUpdateGroqApiKey = { newKey -> viewModel.updateGroqApiKey(newKey) },
+                    groqModel = groqModel,
+                    onUpdateGroqModel = { model -> viewModel.updateGroqModel(model) },
+                    groqEnabled = groqEnabled,
+                    onToggleGroq = { enabled -> viewModel.setGroqEnabled(enabled) },
                     onUpdateSelectedModel = { modelName ->
                         viewModel.updateSelectedModel(modelName)
                     },

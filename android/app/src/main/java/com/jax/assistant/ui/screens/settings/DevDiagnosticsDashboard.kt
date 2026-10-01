@@ -2,6 +2,7 @@ package com.jax.assistant.ui.screens.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +23,9 @@ import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ui.theme.GoldAccent
 import com.jax.assistant.ui.theme.PureDark
 import com.jax.assistant.ui.theme.SurfaceDark
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun DevDiagnosticsDashboard(
@@ -32,6 +36,8 @@ fun DevDiagnosticsDashboard(
 ) {
     var isHealthCheckRunning by remember { mutableStateOf(false) }
     var healthCheckResultMsg by remember { mutableStateOf<String?>(null) }
+    var selectedRequest by remember { mutableStateOf<RequestLog?>(null) }
+    val requestSummaries = requestLogs.filter { it.isRequestSummary }.ifEmpty { requestLogs }
 
     Column(
         modifier = Modifier
@@ -162,56 +168,160 @@ fun DevDiagnosticsDashboard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Recent Routing Request Logs
-        Text(text = "RECENT ROUTING REQUEST LOGS", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(text = "LAST REQUEST", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(6.dp))
+        requestSummaries.firstOrNull()?.let { log ->
+            DiagnosticsRequestCard(log, prominent = true, onClick = { selectedRequest = log })
+            Spacer(modifier = Modifier.height(6.dp))
+            DiagnosticRow("Request ID", log.requestId ?: "—")
+            DiagnosticRow("Why", log.routingReason ?: "Not recorded")
+            DiagnosticRow("Model calls", if (log.modelCallCount > 0) log.modelCallCount.toString() else "Not recorded")
+            DiagnosticRow("Tool calls", if (log.isRequestSummary) log.toolCallCount.toString() else "Not recorded")
+            DiagnosticRow("Memory", memoryLabel(log.memoryStatus))
+            DiagnosticRow("Fallback", log.fallbackChain ?: "None")
+            DiagnosticRow("Fallback reason", log.fallbackReason ?: "—")
+            DiagnosticRow("Tokens", tokenLabel(log))
+        } ?: Text(text = "No request logs recorded yet.", color = Color.Gray, fontSize = 11.sp)
 
-        if (requestLogs.isEmpty()) {
-            Text(text = "No request logs recorded yet.", color = Color.Gray, fontSize = 11.sp)
-        } else {
-            requestLogs.take(5).forEach { log ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                        .background(PureDark.copy(alpha = 0.8f), shape = RoundedCornerShape(6.dp))
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            if (log.isSuccess) Icons.Default.CheckCircle else Icons.Default.Error,
-                            contentDescription = null,
-                            tint = if (log.isSuccess) Color(0xFF00FF66) else Color.Red,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Column {
-                            Text(
-                                text = log.modelUsed,
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                text = "Retries: ${log.retryCount} | Latency: ${log.latencyMs} ms",
-                                color = Color.Gray,
-                                fontSize = 10.sp
-                            )
-                        }
-                    }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(text = "USAGE SUMMARY — CURRENT SESSION", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        DiagnosticsUsageSummary(requestSummaries)
 
-                    Text(
-                        text = "HTTP ${log.httpStatus ?: 200}",
-                        color = if (log.isSuccess) Color(0xFF00FF66) else Color.Red,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(text = "RECENT REQUESTS", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        requestSummaries.take(20).forEach { log ->
+            DiagnosticsRequestCard(log, onClick = { selectedRequest = log })
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+    }
+
+    selectedRequest?.let { log ->
+        RequestDetailsDialog(log = log, onDismiss = { selectedRequest = null })
+    }
+}
+
+@Composable
+private fun DiagnosticsRequestCard(log: RequestLog, prominent: Boolean = false, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .background(PureDark.copy(alpha = if (prominent) 1f else 0.8f), shape = RoundedCornerShape(8.dp))
+            .padding(if (prominent) 11.dp else 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                if (log.isSuccess) Icons.Default.CheckCircle else Icons.Default.Error,
+                contentDescription = null,
+                tint = if (log.isSuccess) Color(0xFF00FF66) else Color.Red,
+                modifier = Modifier.size(if (prominent) 17.dp else 14.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Column {
+                Text(
+                    text = "${formatDiagnosticTime(log.timestamp)}  ${log.route ?: "MODEL"}",
+                    color = Color.White,
+                    fontSize = if (prominent) 12.sp else 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${log.provider}  •  ${log.modelUsed}  •  ${log.latencyMs} ms" +
+                        (if (!log.fallbackChain.isNullOrBlank() && log.fallbackChain!!.contains("→")) "  •  FALLBACK" else ""),
+                    color = Color.Gray,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+        Text(
+            text = if (log.isSuccess) "✓" else "✗",
+            color = if (log.isSuccess) Color(0xFF00FF66) else Color.Red,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun DiagnosticsUsageSummary(logs: List<RequestLog>) {
+    if (logs.isEmpty()) {
+        Text("No request logs recorded yet.", color = Color.Gray, fontSize = 11.sp)
+        return
+    }
+    val providers = logs.groupBy { it.provider }
+    val models = logs.filter { it.modelUsed != "None" }.groupBy { it.modelUsed }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PureDark.copy(alpha = 0.7f), shape = RoundedCornerShape(8.dp))
+            .padding(10.dp)
+    ) {
+        providers.entries.sortedByDescending { it.value.size }.forEach { (provider, entries) ->
+            val tokens = entries.sumOf { it.promptTokens + it.outputTokens }
+            Text(
+                text = "$provider: ${entries.size} requests • avg ${entries.map { it.latencyMs }.average().toLong()} ms" +
+                    if (tokens > 0) " • $tokens tokens" else "",
+                color = Color.White,
+                fontSize = 11.sp
+            )
+        }
+        if (models.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("MODEL USAGE", color = GoldAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            models.entries.sortedByDescending { it.value.size }.forEach { (model, entries) ->
+                Text("$model: ${entries.size} requests", color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
             }
         }
     }
 }
+
+@Composable
+private fun RequestDetailsDialog(log: RequestLog, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("REQUEST DETAILS", color = GoldAccent, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                DiagnosticRow("Time", formatDiagnosticTime(log.timestamp))
+                DiagnosticRow("Request ID", log.requestId ?: "—")
+                DiagnosticRow("Route", log.route ?: "—")
+                DiagnosticRow("Provider", log.provider.ifBlank { "—" })
+                DiagnosticRow("Model", log.modelUsed.ifBlank { "—" })
+                DiagnosticRow("Latency", "${log.latencyMs} ms")
+                DiagnosticRow("HTTP status", log.httpStatus?.toString() ?: "Not recorded")
+                DiagnosticRow("Retries", log.retryCount.toString())
+                DiagnosticRow("Model calls", if (log.modelCallCount > 0) log.modelCallCount.toString() else "Not recorded")
+                DiagnosticRow("Tool calls", if (log.isRequestSummary) log.toolCallCount.toString() else "Not recorded")
+                DiagnosticRow("Memory", memoryLabel(log.memoryStatus))
+                DiagnosticRow("Fallback", log.fallbackChain ?: "None")
+                DiagnosticRow("Fallback reason", log.fallbackReason ?: "—")
+                DiagnosticRow("Tokens", tokenLabel(log))
+                DiagnosticRow("Why", log.routingReason ?: "Not recorded")
+                DiagnosticRow("Status", if (log.isSuccess) "SUCCESS" else "FAILURE")
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("CLOSE") } },
+        containerColor = SurfaceDark,
+        titleContentColor = Color.White,
+        textContentColor = Color.White
+    )
+}
+
+private fun memoryLabel(status: String): String = when (status) {
+    "LOOKUP_MATCH" -> "Used — fact found"
+    "LOOKUP_NO_MATCH" -> "Used — no matching fact"
+    "USED_IN_CONTEXT" -> "Used in context"
+    else -> "Not used"
+}
+
+private fun tokenLabel(log: RequestLog): String = when {
+    log.promptTokens + log.outputTokens == 0 -> "Not available"
+    else -> "Input ${log.promptTokens} • Output ${log.outputTokens} • Total ${log.promptTokens + log.outputTokens}"
+}
+
+private fun formatDiagnosticTime(timestamp: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))

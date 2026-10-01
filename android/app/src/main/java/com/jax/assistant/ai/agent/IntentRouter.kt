@@ -34,6 +34,7 @@ sealed class Route(val name: String, val intent: String, val depth: Int) {
     class Direct(val tool: String, val args: JSONObject, intent: String) :
         Route("DIRECT_TOOL", intent, if (tool in NETWORK_TOOLS) 1 else 0)
     object Capabilities : Route("DIRECT", "CAPABILITIES", 0)
+    class Memory(val reply: String) : Route("MEMORY", "MEMORY_FACT", 0)
     // Required details are missing: ask instead of guessing. `pending` is completed next turn.
     class Clarify(val question: String, val pending: PendingClarification?, intent: String) : Route("CLARIFY", intent, 0)
     // Live information: bounded search + fetch, then one Gemini call to write a sourced answer.
@@ -95,6 +96,10 @@ object FastIntentRouter {
     // "Find hotels in Singapore": a result list, no model call. ("find my ..." stays with the agent.)
     private val findRequest = Regex("^(?:please\\s+)?(?:find|search for|look for)\\s+(?!my\\b|directions\\b|out\\b)(.+)$")
 
+    private val memoryQuestion = Regex(
+        "\\b(?:when is|what is|what was|who is|what(?:'s| is) the|do you remember|what did i tell you|what did i decide|name of)\\b"
+    )
+
     private val bareReminder = Regex("^(?:please\\s+)?(?:remind me|set a reminder|create a reminder|add a reminder)\\b(.*)$")
     private val reminderNeedsReasoning = Regex("\\b(decide|figure out|which|whether|best|should|suggest)\\b")
     // Relative times ("in 10 minutes") are not parsed deterministically; the agent handles them.
@@ -136,6 +141,14 @@ object FastIntentRouter {
 
         if (agentVerbs.containsMatchIn(lower) || agentPhrases.any { lower.contains(it) }) return Route.Agent
         return Route.Chat
+    }
+
+    // Cheap lexical gate used before durable-memory lookup; ordinary conversation does not pay
+    // for semantic retrieval or embeddings.
+    fun isLikelyMemoryQuery(input: String): Boolean {
+        val lower = input.lowercase(Locale.US)
+        return memoryQuestion.containsMatchIn(lower) ||
+            lower.contains("do you remember") || lower.contains("what did i tell you")
     }
 
     private fun weather(text: String, lower: String): Route.Direct? {

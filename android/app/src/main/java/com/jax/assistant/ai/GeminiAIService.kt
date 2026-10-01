@@ -1,6 +1,7 @@
 package com.jax.assistant.ai
 
 import android.content.Context
+import com.jax.assistant.config.AppConfig
 
 class GeminiAIService(
     var apiKey: String,
@@ -8,6 +9,9 @@ class GeminiAIService(
 ) : AIService {
 
     val router = AIRouter(context)
+    var groqApiKey: String = ""
+    var groqModel: String = AppConfig.DEFAULT_GROQ_MODEL
+    var groqEnabled: Boolean = false
 
     override suspend fun generate(prompt: String, modelName: String): String {
         return generateFor(prompt, modelName, inferCapability(prompt), requireJson = true)
@@ -24,6 +28,9 @@ class GeminiAIService(
         return router.route(
             prompt = prompt,
             apiKey = apiKey,
+            groqApiKey = groqApiKey,
+            groqModel = groqModel,
+            groqEnabled = groqEnabled,
             requestedModel = modelName,
             capability = capability,
             requireJson = requireJson
@@ -31,7 +38,7 @@ class GeminiAIService(
     }
 
     override suspend fun testConnection(modelName: String): TestConnectionResult {
-        return router.testConnection(apiKey, modelName)
+        return router.testConnection(apiKey, modelName, groqApiKey, groqModel, groqEnabled)
     }
 
     private fun inferCapability(prompt: String): TaskCapability {

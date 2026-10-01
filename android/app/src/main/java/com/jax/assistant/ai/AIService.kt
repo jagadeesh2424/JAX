@@ -6,11 +6,13 @@ data class TestConnectionResult(
 )
 
 sealed class AIError(val userFriendlyMessage: String) {
-    object InvalidApiKey : AIError("Invalid or missing Gemini API key. Please tap Settings ⚙️ to enter your API key.")
-    object QuotaExceeded : AIError("API quota or rate limit reached. Please check your Google AI key usage limits.")
+    object InvalidApiKey : AIError("A configured AI provider key is invalid or missing. Please check Settings ⚙️.")
+    object QuotaExceeded : AIError("Gemini is temporarily rate-limited. Check provider configuration or try again shortly.")
     object ModelNotFound : AIError("Selected AI model is unavailable or not supported for this API key.")
     object NetworkError : AIError("Network connection error. Please check your internet connection.")
     object Timeout : AIError("Request timed out waiting for J.A.X. AI response.")
+    object ProvidersUnavailable : AIError("J.A.X. couldn't reach any configured AI provider right now.")
+    object GeminiAndGroqUnavailable : AIError("Gemini and Groq are currently unavailable.")
     data class UnknownError(val message: String) : AIError("J.A.X. Notice: $message")
 }
 

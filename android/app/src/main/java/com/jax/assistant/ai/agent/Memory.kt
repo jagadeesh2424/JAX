@@ -134,6 +134,13 @@ class WorkingMemory(
         state = state.copy(entities = (others + entity).sortedBy { it.timestamp }.takeLast(MAX_ENTITIES), updatedAt = clock())
     }
 
+    // A fresh explicit entity for a type supersedes older context for that type. This is used for
+    // locations so a current request for Singapore can never be shadowed by stale Bangalore state.
+    @Synchronized
+    fun clear(type: EntityType) {
+        state = state.copy(entities = state.entities.filterNot { it.type == type }, updatedAt = clock())
+    }
+
     @Synchronized
     fun setCandidates(items: List<TrackedEntity>, topic: String) {
         state = state.copy(candidates = items.take(MAX_CANDIDATES), topic = topic.ifBlank { state.topic }, updatedAt = clock())

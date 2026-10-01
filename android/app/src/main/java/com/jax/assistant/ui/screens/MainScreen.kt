@@ -139,9 +139,16 @@ fun MainScreen(
     ,streamingReply: String = ""
     ,aiBackend: AiBackend = AiBackend.AUTO
     ,onChangeAiBackend: (AiBackend) -> Unit = {}
+    ,groqApiKey: String = ""
+    ,onUpdateGroqApiKey: (String) -> Unit = {}
+    ,groqModel: String = ""
+    ,onUpdateGroqModel: (String) -> Unit = {}
+    ,groqEnabled: Boolean = false
+    ,onToggleGroq: (Boolean) -> Unit = {}
 ) {
     var activeTab by remember { mutableStateOf(initialTab) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings, 6: Notes, 7: Executive Dashboard
     var showDevConsole by remember { mutableStateOf(false) }
+    val hasConfiguredProvider = apiKey.isNotBlank() || (groqEnabled && groqApiKey.isNotBlank())
 
     if (showDevConsole) {
         DeveloperConsoleScreen(
@@ -176,7 +183,7 @@ fun MainScreen(
                         modifier = Modifier
                             .size(10.dp)
                             .background(
-                                if (apiKey.isNotBlank()) Color(0xFF00FF66) else Color.Yellow,
+                                if (hasConfiguredProvider) Color(0xFF00FF66) else Color.Yellow,
                                 CircleShape
                             )
                     )
@@ -373,6 +380,12 @@ fun MainScreen(
                     onUpdateApiKey = onUpdateApiKey,
                     aiBackend = aiBackend,
                     onChangeAiBackend = onChangeAiBackend,
+                    groqApiKey = groqApiKey,
+                    onUpdateGroqApiKey = onUpdateGroqApiKey,
+                    groqModel = groqModel,
+                    onUpdateGroqModel = onUpdateGroqModel,
+                    groqEnabled = groqEnabled,
+                    onToggleGroq = onToggleGroq,
                     selectedModel = selectedModel,
                     onUpdateSelectedModel = onUpdateSelectedModel,
                     onTestConnection = onTestConnection,

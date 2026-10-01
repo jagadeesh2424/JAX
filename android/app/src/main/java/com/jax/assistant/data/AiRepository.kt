@@ -35,15 +35,27 @@ class AiRepository(context: Context, initialApiKey: String) {
         aiService.apiKey = key.trim()
     }
 
+    fun updateGroqConfiguration(apiKey: String, model: String, enabled: Boolean) {
+        aiService.groqApiKey = apiKey.trim()
+        aiService.groqModel = model.trim()
+        aiService.groqEnabled = enabled
+    }
+
     fun setBackend(backend: AiBackend) {
         aiService.router.backend = backend
     }
 
-    fun backendName(): String = aiService.router.backendName(aiService.apiKey)
+    fun backendName(): String = aiService.router.backendName(
+        aiService.apiKey, aiService.groqApiKey, aiService.groqModel, aiService.groqEnabled
+    )
 
-    fun nativeToolsAvailable(): Boolean = aiService.router.nativeToolsAvailable(aiService.apiKey)
+    fun nativeToolsAvailable(): Boolean = aiService.router.nativeToolsAvailable(
+        aiService.apiKey, aiService.groqApiKey, aiService.groqModel, aiService.groqEnabled
+    )
 
     val requestLogs: StateFlow<List<RequestLog>> get() = aiService.router.requestLogs
+
+    fun recordRequestLog(log: RequestLog) = aiService.router.recordRequestLog(log)
 
     fun getModelCatalog(): List<ModelInfo> = aiService.router.getModels()
 
@@ -67,7 +79,10 @@ class AiRepository(context: Context, initialApiKey: String) {
             aiService.apiKey,
             model,
             TaskCapability.LONG_SUMMARY,
-            onText = currentCoroutineContext()[TextStreamSink]?.onText
+            onText = currentCoroutineContext()[TextStreamSink]?.onText,
+            groqApiKey = aiService.groqApiKey,
+            groqModel = aiService.groqModel,
+            groqEnabled = aiService.groqEnabled
         ).text
 
     // One model call with native tool declarations (Gemini function calling).
@@ -82,7 +97,10 @@ class AiRepository(context: Context, initialApiKey: String) {
         aiService.apiKey,
         model,
         TaskCapability.COMPLEX_REASONING,
-        onText = if (stream) currentCoroutineContext()[TextStreamSink]?.onText else null
+        onText = if (stream) currentCoroutineContext()[TextStreamSink]?.onText else null,
+        groqApiKey = aiService.groqApiKey,
+        groqModel = aiService.groqModel,
+        groqEnabled = aiService.groqEnabled
     )
 
     suspend fun embed(text: String): FloatArray? = embeddingService.embed(text)

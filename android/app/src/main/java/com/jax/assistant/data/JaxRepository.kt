@@ -8,6 +8,7 @@ import com.jax.assistant.ai.MemoryEngine
 import com.jax.assistant.ai.ModelMessage
 import com.jax.assistant.ai.ModelResponse
 import com.jax.assistant.ai.ModelToolSpec
+import com.jax.assistant.ai.ProviderErrorCategory
 import com.jax.assistant.ai.VectorUtils
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.agent.AgentController
@@ -15,6 +16,7 @@ import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.ai.agent.ChatDraft
 import com.jax.assistant.ai.agent.ContextAssembler
 import com.jax.assistant.ai.agent.JaxPersona
+import com.jax.assistant.ai.agent.MemoryFirstResolver
 import com.jax.assistant.ai.agent.ProposedAction
 import com.jax.assistant.ai.agent.RequestPipeline
 import com.jax.assistant.ai.agent.RequestTrace
@@ -78,6 +80,7 @@ class JaxRepository(context: Context) {
 
     init {
         aiRepo.setBackend(prefs.getAiBackend())
+        aiRepo.updateGroqConfiguration(prefs.getGroqApiKey(), prefs.getGroqModel(), prefs.isGroqEnabled())
     }
 
     // Every capability J.A.X. has. Adding a tool here makes it available to all routes.
@@ -113,6 +116,27 @@ class JaxRepository(context: Context) {
     fun saveApiKey(key: String) {
         prefs.saveApiKey(key)
         aiRepo.updateApiKey(key)
+    }
+
+    fun getGroqApiKey(): String = prefs.getGroqApiKey()
+
+    fun saveGroqApiKey(key: String) {
+        prefs.saveGroqApiKey(key)
+        aiRepo.updateGroqConfiguration(key, prefs.getGroqModel(), prefs.isGroqEnabled())
+    }
+
+    fun isGroqEnabled(): Boolean = prefs.isGroqEnabled()
+
+    fun setGroqEnabled(enabled: Boolean) {
+        prefs.setGroqEnabled(enabled)
+        aiRepo.updateGroqConfiguration(prefs.getGroqApiKey(), prefs.getGroqModel(), enabled)
+    }
+
+    fun getGroqModel(): String = prefs.getGroqModel()
+
+    fun saveGroqModel(modelName: String) {
+        prefs.saveGroqModel(modelName)
+        aiRepo.updateGroqConfiguration(prefs.getGroqApiKey(), modelName, prefs.isGroqEnabled())
     }
 
     fun getSelectedModel(): String = prefs.getSelectedModel()
@@ -209,9 +233,67 @@ class JaxRepository(context: Context) {
             selectedModel = { getSelectedModel() },
             answerCall = { prompt, model -> aiRepo.generateAnswer(prompt, model, JaxPersona.systemInstruction()) },
             toolModel = toolModel,
-            chatDraft = { text -> chatDraft(text, facts, withWorkingContext(conversationSummary)) }
+            chatDraft = { text -> chatDraft(text, facts, withWorkingContext(conversationSummary)) },
+            memoryAnswer = { text -> MemoryFirstResolver.resolve(text, facts) }
         )
-        return pipeline.handle(input, onPartial, confirm).reply
+        val result = pipeline.handle(input, onPartial, confirm)
+        aiRepo.recordRequestLog(result.trace.toRequestLog())
+        return result.reply
+    }
+
+    private fun RequestTrace.toRequestLog(): RequestLog {
+        val attempts = providerAttempts
+        val localProvider = when {
+            route == "MEMORY" -> "Local"
+            tools.any { it.startsWith("get_weather:") } -> "Open-Meteo"
+            tools.any { it.startsWith("navigate:") } -> "Maps"
+            tools.any { it.startsWith("get_datetime:") || it.startsWith("create_") } -> "Local"
+            tools.isNotEmpty() -> "Local"
+            else -> "Local"
+        }
+        val providerName = provider ?: localProvider
+        val modelName = model?.takeIf { it.isNotBlank() } ?: "None"
+        val routeName = intent.ifBlank { route }.let {
+            when (it) {
+                "GENERAL" -> "CHAT"
+                "MEMORY_FACT" -> "MEMORY"
+                "TOOL_REQUEST" -> "AGENT"
+                "COMPLEX_AGENT" -> "PLAN"
+                else -> it
+            }
+        }
+        val chain = attempts.map { it.provider }.distinct().joinToString(" → ").ifBlank { null }
+        val reason = routingReason ?: when {
+            route == "MEMORY" -> "Memory-first fact match"
+            tools.isNotEmpty() -> "Deterministic ${tools.first().substringBefore(":")}"
+            else -> "Local request path"
+        }
+        return RequestLog(
+            timestamp = System.currentTimeMillis(),
+            modelUsed = modelName,
+            provider = providerName,
+            latencyMs = totalLatencyMs,
+            httpStatus = attempts.lastOrNull()?.let { if (it.success) 200 else null },
+            errorCode = errorType.ifBlank { null },
+            errorMessage = null,
+            retryCount = (attempts.size - 1).coerceAtLeast(0),
+            isSuccess = success,
+            promptTokens = promptTokens,
+            outputTokens = outputTokens,
+            fallbackFrom = fallbackFrom,
+            fallbackReason = fallbackReason,
+            errorCategory = errorCategory.takeIf { it.isNotBlank() }
+                ?.let { runCatching { ProviderErrorCategory.valueOf(it) }.getOrDefault(ProviderErrorCategory.UNKNOWN) }
+                ?: ProviderErrorCategory.NONE,
+            requestId = requestId,
+            route = routeName,
+            routingReason = reason,
+            fallbackChain = chain,
+            modelCallCount = maxOf(geminiCalls, attempts.size),
+            toolCallCount = tools.size,
+            memoryStatus = memoryStatus,
+            isRequestSummary = true
+        )
     }
 
     private val toolModel = object : ToolCallingModel {
@@ -289,15 +371,19 @@ class JaxRepository(context: Context) {
         facts: List<FactEntity>,
         conversationSummary: String,
         trace: RequestTrace
-    ): String = ContextAssembler().build(
-        relevantFacts = selectRelevantFactsHybrid(input, facts, trace),
+    ): String {
+        val relevantFacts = selectRelevantFactsHybrid(input, facts, trace)
+        if (relevantFacts.isNotEmpty()) trace.recordMemoryContextUsed()
+        return ContextAssembler().build(
+        relevantFacts = relevantFacts,
         openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted },
         conversationSummary = conversationSummary,
         currentDate = java.time.LocalDate.now().toString(),
         userProfile = prefs.getUserProfile(),
         learnedWorkflows = agentRunRepo.learnedWorkflows(),
         workingState = workingMemory.contextBlock()
-    ).text
+        ).text
+    }
 
     fun clearWorkingMemory() = workingMemory.clear()
 
@@ -371,6 +457,7 @@ class JaxRepository(context: Context) {
     suspend fun clearAllLocalData() {
         locator.clearAllLocalData()
         aiRepo.updateApiKey("")
+        aiRepo.updateGroqConfiguration("", com.jax.assistant.config.AppConfig.DEFAULT_GROQ_MODEL, false)
     }
 
     // ---- Executive Intelligence (Phase 2) ----

@@ -114,7 +114,8 @@ class VoiceManager(
     }
 
     fun speak(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jax_tts_id")
+        val speechText = SpeechTextSanitizer.sanitize(text)
+        if (speechText.isNotBlank()) tts?.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, "jax_tts_id")
     }
 
     fun stopSpeaking() {

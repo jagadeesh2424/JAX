@@ -27,13 +27,30 @@ The APK lands in `app/build/outputs/apk/debug/`.
 
 ---
 
-## 2. First-time setup: Gemini API key
+## 2. First-time setup: AI providers
 
-JAX talks to Google Gemini. Provide a key in **either** way:
+JAX uses local deterministic tools and memory first. In **Auto**, model requests use:
+
+`Firebase AI Logic → Gemini Direct → Groq fallback`
+
+Firebase is the preferred provider. Provide a Gemini key in **either** way:
 - In-app: **Settings tab → API key field** (stored in `SharedPreferences` `jax_prefs`).
 - Or set an environment variable `GEMINI_API_KEY` before launching.
 
-Default model is `gemini-2.0-flash` (change in Settings, or the default in `config/AppConfig.kt`).
+For the optional Groq fallback, open **Settings → Groq fallback**, enter the key, select a model,
+enable the toggle, and save. The default model is `openai/gpt-oss-20b`; it can be changed without
+source edits. Select **Auto** to use it only after Firebase/Gemini has a retryable failure.
+
+Provider keys are stored locally using the existing JAX settings mechanism for personal testing.
+The Groq key is therefore present on the client device and is not equivalent to a server-side secret;
+do not use this arrangement for a multi-user production app. Keys are not written to request traces,
+logs, tests, or committed files.
+
+Use **Settings → Developer Mode → Provider Diagnostics** to verify the provider/model and fallback
+reason recorded for the most recent request. A 429/quota, timeout, network, server, or provider
+unavailable error may advance Auto to the next configured provider; invalid requests, safety blocks,
+and malformed tool arguments do not loop across providers. Each provider is attempted at most once
+per request, with a short local cooldown after repeated transient failures.
 
 ---
 

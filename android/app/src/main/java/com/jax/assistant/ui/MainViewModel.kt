@@ -90,6 +90,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _apiKey = MutableStateFlow<String>(repository.getApiKey())
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
+    private val _groqApiKey = MutableStateFlow<String>(repository.getGroqApiKey())
+    val groqApiKey: StateFlow<String> = _groqApiKey.asStateFlow()
+
+    private val _groqModel = MutableStateFlow<String>(repository.getGroqModel())
+    val groqModel: StateFlow<String> = _groqModel.asStateFlow()
+
+    private val _groqEnabled = MutableStateFlow(repository.isGroqEnabled())
+    val groqEnabled: StateFlow<Boolean> = _groqEnabled.asStateFlow()
+
     private val _selectedModel = MutableStateFlow<String>(repository.getSelectedModel())
     val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
 
@@ -247,6 +256,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.clearAllLocalData()
             _messages.value = listOf(greeting("Local data cleared. Add an API key to continue using J.A.X."))
             _apiKey.value = repository.getApiKey()
+            _groqApiKey.value = repository.getGroqApiKey()
+            _groqModel.value = repository.getGroqModel()
+            _groqEnabled.value = repository.isGroqEnabled()
             _selectedModel.value = repository.getSelectedModel()
             _developerMode.value = repository.isDeveloperMode()
             _dailyAutomationEnabled.value = repository.isDailyAutomationEnabled()
@@ -375,6 +387,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateApiKey(newKey: String) {
         repository.saveApiKey(newKey)
         _apiKey.value = newKey.trim()
+    }
+
+    fun updateGroqApiKey(newKey: String) {
+        repository.saveGroqApiKey(newKey)
+        _groqApiKey.value = newKey.trim()
+    }
+
+    fun updateGroqModel(model: String) {
+        repository.saveGroqModel(model)
+        _groqModel.value = model.trim()
+    }
+
+    fun setGroqEnabled(enabled: Boolean) {
+        repository.setGroqEnabled(enabled)
+        _groqEnabled.value = enabled
     }
 
     fun updateSelectedModel(modelName: String) {

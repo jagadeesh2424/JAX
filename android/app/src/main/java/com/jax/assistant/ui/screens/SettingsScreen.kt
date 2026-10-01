@@ -46,6 +46,12 @@ fun SettingsScreen(
     onUpdateApiKey: (String) -> Unit,
     aiBackend: AiBackend = AiBackend.AUTO,
     onChangeAiBackend: (AiBackend) -> Unit = {},
+    groqApiKey: String = "",
+    onUpdateGroqApiKey: (String) -> Unit = {},
+    groqModel: String = "openai/gpt-oss-20b",
+    onUpdateGroqModel: (String) -> Unit = {},
+    groqEnabled: Boolean = false,
+    onToggleGroq: (Boolean) -> Unit = {},
     selectedModel: String = "gemini-2.0-flash",
     onUpdateSelectedModel: (String) -> Unit = {},
     onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
@@ -74,8 +80,12 @@ fun SettingsScreen(
     onClearAllData: () -> Unit
 ) {
     var inputKey by remember(apiKey) { mutableStateOf(apiKey) }
+    var inputGroqKey by remember(groqApiKey) { mutableStateOf(groqApiKey) }
+    var inputGroqModel by remember(groqModel) { mutableStateOf(groqModel) }
     var isKeyVisible by remember { mutableStateOf(false) }
+    var isGroqKeyVisible by remember { mutableStateOf(false) }
     var showSavedToast by remember { mutableStateOf(false) }
+    var showGroqSavedToast by remember { mutableStateOf(false) }
 
     var isTestingConnection by remember { mutableStateOf(false) }
     var testResultMsg by remember { mutableStateOf<String?>(null) }
@@ -178,7 +188,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "J.A.X. automatically selects the optimal Gemini model based on task capability, health status, speed, and failover health.",
+                text = "J.A.X. uses local tools and memory first, then Firebase → Gemini Direct → Groq when configured.",
                 color = Color.Gray,
                 fontSize = 12.sp
             )
@@ -259,13 +269,18 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Firebase AI Logic keeps the Gemini key in your Firebase project, so nothing is stored on this phone. " +
-                    "Auto uses it and falls back to your own API key if Firebase AI Logic isn't set up.",
+                    "Auto uses Firebase first, then Gemini Direct, then Groq when independently configured.",
                 color = Color.Gray,
                 fontSize = 12.sp
             )
             Spacer(modifier = Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(AiBackend.AUTO to "Auto", AiBackend.FIREBASE to "Firebase", AiBackend.DIRECT to "API key").forEach { (option, label) ->
+                listOf(
+                    AiBackend.AUTO to "Auto",
+                    AiBackend.FIREBASE to "Firebase",
+                    AiBackend.DIRECT to "Gemini",
+                    AiBackend.GROQ to "Groq"
+                ).forEach { (option, label) ->
                     val selected = option == aiBackend
                     OutlinedButton(
                         onClick = { onChangeAiBackend(option) },
@@ -277,6 +292,89 @@ fun SettingsScreen(
                         Text(label, fontSize = 12.sp)
                     }
                 }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Groq fallback configuration. The key follows the existing local settings pattern;
+        // it is never included in diagnostics or request traces.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("GROQ FALLBACK", color = CyanAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Switch(
+                    checked = groqEnabled,
+                    onCheckedChange = onToggleGroq,
+                    colors = SwitchDefaults.colors(checkedThumbColor = PureDark, checkedTrackColor = CyanAccent)
+                )
+            }
+            Text(
+                "Used only after Firebase and Gemini Direct fail with a retryable provider error. " +
+                    "The key is stored locally for personal testing; this is not a server-side secret.",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedTextField(
+                value = inputGroqKey,
+                onValueChange = { inputGroqKey = it },
+                label = { Text("Groq API Key (gsk_...)", color = Color.Gray) },
+                singleLine = true,
+                visualTransformation = if (isGroqKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CyanAccent,
+                    unfocusedBorderColor = Color.DarkGray,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = inputGroqModel,
+                onValueChange = { inputGroqModel = it },
+                label = { Text("Groq model", color = Color.Gray) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CyanAccent,
+                    unfocusedBorderColor = Color.DarkGray,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { isGroqKeyVisible = !isGroqKeyVisible }) {
+                    Text(if (isGroqKeyVisible) "Hide Key" else "Show Key", color = Color.LightGray, fontSize = 12.sp)
+                }
+                Button(
+                    onClick = {
+                        onUpdateGroqApiKey(inputGroqKey)
+                        onUpdateGroqModel(inputGroqModel)
+                        showGroqSavedToast = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Save Groq Settings", color = PureDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+            if (showGroqSavedToast) {
+                Text("✓ Groq fallback settings saved.", color = Color(0xFF00FF66), fontSize = 11.sp)
             }
         }
 
@@ -375,7 +473,7 @@ fun SettingsScreen(
             if (showSavedToast) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "✓ API Key updated and saved securely.",
+                    text = "✓ API Key updated and saved on this device.",
                     color = Color(0xFF00FF66),
                     fontSize = 11.sp
                 )
@@ -695,7 +793,7 @@ fun SettingsScreenPreview() {
 
     JAXAssistantTheme {
         SettingsScreen(
-            apiKey = "AIzaSyPreviewMockKey123456789",
+            apiKey = "preview-key-not-configured",
             onUpdateApiKey = {},
             selectedModel = "gemini-2.0-flash",
             developerMode = true,
@@ -706,5 +804,3 @@ fun SettingsScreenPreview() {
         )
     }
 }
-
-

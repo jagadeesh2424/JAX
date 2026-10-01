@@ -16,6 +16,7 @@ import com.jax.assistant.ai.agent.ToolRegistry
 import com.jax.assistant.ai.agent.ToolResult
 import com.jax.assistant.ai.agent.ToolRisk
 import com.jax.assistant.ai.agent.InMemoryEventSink
+import com.jax.assistant.ai.agent.MemoryFirstResolver
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -69,6 +70,22 @@ class AiLayerTest {
         val scored = memoryEngine.scoreMemories("where is my cat", facts)
         assertEquals(1, scored.size)
         assertEquals("Pet Cat", scored[0].first.title)
+    }
+
+    @Test
+    fun memoryFirstAnswersHighConfidenceBirthdayWithoutAProvider() {
+        val facts = listOf(FactEntity("lavisha", "Lavisha birthday", "Personal", "12 May", confidence = 1.0))
+
+        val answer = MemoryFirstResolver.resolve("when is Lavisha birthday?", facts)
+
+        assertEquals("Lavisha birthday is 12 May.", answer)
+    }
+
+    @Test
+    fun memoryFirstSkipsLowConfidenceFact() {
+        val facts = listOf(FactEntity("uncertain", "John birthday", "Personal", "maybe June", confidence = 0.4))
+
+        assertNull(MemoryFirstResolver.resolve("when is John birthday?", facts))
     }
 
     @Test
@@ -147,7 +164,7 @@ class AiLayerTest {
         val result = brain.processUserInput("Hello JAX")
         assertTrue(result is JaxParseResult.QuestionResult)
         val questionResult = result as JaxParseResult.QuestionResult
-        assertTrue(questionResult.reply.contains("Invalid or missing Gemini API key"))
+        assertTrue(questionResult.reply.contains("configured AI provider key"))
     }
 
     @Test

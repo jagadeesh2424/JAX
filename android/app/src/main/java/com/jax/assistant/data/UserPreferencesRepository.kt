@@ -20,6 +20,25 @@ class UserPreferencesRepository(context: Context) {
         prefs.edit().putString("gemini_api_key", key.trim()).apply()
     }
 
+    fun getGroqApiKey(): String = prefs.getString("groq_api_key", null) ?: ""
+
+    fun saveGroqApiKey(key: String) {
+        prefs.edit().putString("groq_api_key", key.trim()).apply()
+    }
+
+    fun isGroqEnabled(): Boolean = prefs.getBoolean("groq_enabled", false)
+
+    fun setGroqEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("groq_enabled", enabled).apply()
+    }
+
+    fun getGroqModel(): String = prefs.getString("groq_model", AppConfig.DEFAULT_GROQ_MODEL)
+        ?: AppConfig.DEFAULT_GROQ_MODEL
+
+    fun saveGroqModel(modelName: String) {
+        prefs.edit().putString("groq_model", modelName.trim()).apply()
+    }
+
     fun getSelectedModel(): String =
         prefs.getString("selected_ai_model", AppConfig.DEFAULT_MODEL) ?: AppConfig.DEFAULT_MODEL
 

@@ -4,6 +4,8 @@ import com.jax.assistant.ai.AIException
 import com.jax.assistant.ai.ModelMessage
 import com.jax.assistant.ai.ModelResponse
 import com.jax.assistant.ai.ModelToolSpec
+import com.jax.assistant.ai.ProviderAttemptTrace
+import com.jax.assistant.ai.ProviderTraceRecorder
 import com.jax.assistant.ai.TextStreamSink
 import com.jax.assistant.ai.TokenUsage
 import com.jax.assistant.ai.UsageRecorder
@@ -53,6 +55,21 @@ class RequestTrace(val requestId: String = UUID.randomUUID().toString().take(8))
     // A degraded path was used (planner -> agent loop, weather -> browser, research without Gemini).
     var fallback: Boolean = false
     var resolvedReference: String = ""
+    val providerAttempts = mutableListOf<ProviderAttemptTrace>()
+    var provider: String? = null
+        private set
+    var model: String? = null
+        private set
+    var fallbackFrom: String? = null
+        private set
+    var fallbackReason: String? = null
+        private set
+    var routingReason: String? = null
+        private set
+    var errorCategory: String = ""
+        private set
+    var memoryStatus: String = "NOT_USED"
+        private set
     val tools = mutableListOf<String>()
     private val verifications = mutableListOf<VerificationStatus>()
     var geminiCalls = 0
@@ -74,6 +91,30 @@ class RequestTrace(val requestId: String = UUID.randomUUID().toString().take(8))
     fun recordUsage(usage: TokenUsage) {
         promptTokens += usage.promptTokens
         outputTokens += usage.outputTokens
+    }
+
+    @Synchronized
+    fun recordProvider(attempt: ProviderAttemptTrace) {
+        providerAttempts += attempt
+        provider = attempt.provider
+        model = attempt.model
+        fallbackFrom = attempt.fallbackFrom
+        fallbackReason = attempt.fallbackReason
+        routingReason = if (attempt.fallbackFrom != null) {
+            "Fallback after ${attempt.fallbackReason ?: "provider failure"}"
+        } else {
+            "AUTO mode — primary conversational provider"
+        }
+        if (!attempt.success) errorCategory = attempt.errorCategory.name
+        if (attempt.fallbackFrom != null) fallback = true
+    }
+
+    fun recordMemoryLookup(found: Boolean) {
+        memoryStatus = if (found) "LOOKUP_MATCH" else "LOOKUP_NO_MATCH"
+    }
+
+    fun recordMemoryContextUsed() {
+        if (memoryStatus == "NOT_USED") memoryStatus = "USED_IN_CONTEXT"
     }
 
     suspend fun <T> gemini(block: suspend () -> T): T {
@@ -122,7 +163,10 @@ class RequestTrace(val requestId: String = UUID.randomUUID().toString().take(8))
             "toolCalls=${tools.size} toolsUsed=[${tools.joinToString(", ")}] verification=$verificationStatus " +
             "embeddingCalls=$embeddingCalls geminiLatencyMs=$geminiLatencyMs toolExecutionMs=$toolExecutionMs " +
             "tokensIn=$promptTokens tokensOut=$outputTokens " +
-            "totalLatencyMs=$totalLatencyMs success=$success errorType=${errorType.ifBlank { "NONE" }} fallback=$fallback" +
+            "totalLatencyMs=$totalLatencyMs success=$success errorType=${errorType.ifBlank { "NONE" }} " +
+            "provider=${provider ?: "NONE"} model=${model ?: "NONE"} fallback=$fallback " +
+            "fallbackFrom=${fallbackFrom ?: "NONE"} fallbackReason=${fallbackReason ?: "NONE"} " +
+            "errorCategory=${errorCategory.ifBlank { "NONE" }}" +
             (if (resolvedReference.isNotBlank()) " reference=resolved" else "")
 }
 
@@ -152,6 +196,8 @@ class RequestPipeline(
     private val toolModel: ToolCallingModel? = null,
     // Chat turn that may propose one action; the action runs through ToolExecutor. Preferred over `chat`.
     private val chatDraft: (suspend (input: String) -> ChatDraft)? = null,
+    // Lightweight fact lookup; returns null on a miss so normal routing remains unchanged.
+    private val memoryAnswer: (suspend (input: String) -> String?)? = null,
     private val systemInstruction: () -> String = { JaxPersona.systemInstruction() }
 ) {
 
@@ -164,7 +210,9 @@ class RequestPipeline(
     ): PipelineResult {
         val trace = RequestTrace()
         val streaming = onPartial?.let { TextStreamSink(it) } ?: EmptyCoroutineContext
-        return withContext(UsageRecorder(trace::recordUsage) + streaming) { process(rawInput, confirm, trace) }
+        return withContext(UsageRecorder(trace::recordUsage) + ProviderTraceRecorder(trace::recordProvider) + streaming) {
+            process(rawInput, confirm, trace)
+        }
     }
 
     private suspend fun process(
@@ -180,7 +228,10 @@ class RequestPipeline(
         // An open question is answered (or abandoned) by this turn either way.
         if (workingMemory.state.pending != null) workingMemory.setPending(null)
         val text = resolution.text
-        val route = resolution.route ?: FastIntentRouter.route(text, current)
+        val likelyMemoryQuery = FastIntentRouter.isLikelyMemoryQuery(text)
+        val memoryRoute = memoryAnswer?.invoke(text)?.also { trace.recordMemoryLookup(true) }?.let { Route.Memory(it) }
+        if (likelyMemoryQuery && memoryRoute == null) trace.recordMemoryLookup(false)
+        val route = memoryRoute ?: resolution.route ?: FastIntentRouter.route(text, current)
         trace.route = route.name
         trace.intent = route.intent
         trace.depth = route.depth
@@ -194,6 +245,7 @@ class RequestPipeline(
             when (route) {
                 is Route.Direct -> runDirect(route, text, executor, trace, confirm)
                 Route.Capabilities -> registry.describeCapabilities()
+                is Route.Memory -> route.reply
                 is Route.Clarify -> {
                     workingMemory.setPending(route.pending)
                     route.question

@@ -7,7 +7,52 @@ import kotlin.coroutines.CoroutineContext
 // Where Gemini runs. FIREBASE keeps the API key in the Firebase project (Firebase AI Logic);
 // DIRECT calls the Gemini API with the user's own key; AUTO prefers Firebase and falls back to
 // DIRECT (when a key exists) if Firebase AI Logic is not set up or a feature needs it.
-enum class AiBackend { AUTO, FIREBASE, DIRECT }
+enum class AiBackend { AUTO, FIREBASE, DIRECT, GROQ }
+
+/** Provider-level failure categories used for bounded fallback and safe diagnostics. */
+enum class ProviderErrorCategory {
+    NONE,
+    AUTHENTICATION_ERROR,
+    RATE_LIMITED,
+    QUOTA_EXCEEDED,
+    NETWORK_ERROR,
+    TIMEOUT,
+    INVALID_REQUEST,
+    MODEL_UNAVAILABLE,
+    SERVER_ERROR,
+    BACKEND_NOT_CONFIGURED,
+    TOOLS_UNSUPPORTED,
+    SAFETY_REJECTION,
+    UNKNOWN
+}
+
+object ProviderErrorClassifier {
+    fun classify(httpStatus: Int?, errorCode: String?, message: String = ""): ProviderErrorCategory {
+        val code = errorCode.orEmpty().uppercase()
+        val text = "$code $message".lowercase()
+        return when {
+            code == ModelAttempt.BACKEND_NOT_CONFIGURED -> ProviderErrorCategory.BACKEND_NOT_CONFIGURED
+            code == ModelAttempt.TOOLS_UNSUPPORTED -> ProviderErrorCategory.TOOLS_UNSUPPORTED
+            code.contains("BLOCK") || code.contains("SAFETY") -> ProviderErrorCategory.SAFETY_REJECTION
+            httpStatus == 401 || httpStatus == 403 || code.contains("API_KEY") || code.contains("AUTH") ->
+                ProviderErrorCategory.AUTHENTICATION_ERROR
+            code.contains("QUOTA") || httpStatus == 429 && (text.contains("quota") || text.contains("resource_exhausted")) ->
+                ProviderErrorCategory.QUOTA_EXCEEDED
+            httpStatus == 429 || code.contains("RATE") || code.contains("THROTTL") ->
+                ProviderErrorCategory.RATE_LIMITED
+            httpStatus == 408 || code.contains("TIMEOUT") || text.contains("timed out") ->
+                ProviderErrorCategory.TIMEOUT
+            code == ModelAttempt.NETWORK || code.contains("NETWORK") || text.contains("unable to resolve host") ->
+                ProviderErrorCategory.NETWORK_ERROR
+            httpStatus == 404 || code.contains("NOT_FOUND") || code.contains("MODEL") && code.contains("UNAVAILABLE") ->
+                ProviderErrorCategory.MODEL_UNAVAILABLE
+            httpStatus != null && httpStatus in 400..499 -> ProviderErrorCategory.INVALID_REQUEST
+            httpStatus != null && httpStatus >= 500 -> ProviderErrorCategory.SERVER_ERROR
+            errorCode.isNullOrBlank() && message.isBlank() -> ProviderErrorCategory.UNKNOWN
+            else -> ProviderErrorCategory.UNKNOWN
+        }
+    }
+}
 
 enum class ModelRole { USER, MODEL, TOOL }
 
@@ -49,6 +94,18 @@ data class TokenUsage(val promptTokens: Int = 0, val outputTokens: Int = 0) {
     operator fun plus(other: TokenUsage) = TokenUsage(promptTokens + other.promptTokens, outputTokens + other.outputTokens)
 }
 
+data class ProviderAttemptTrace(
+    val provider: String,
+    val model: String,
+    val route: String,
+    val fallbackFrom: String? = null,
+    val fallbackReason: String? = null,
+    val latencyMs: Long,
+    val usage: TokenUsage = TokenUsage(),
+    val success: Boolean,
+    val errorCategory: ProviderErrorCategory = ProviderErrorCategory.NONE
+)
+
 data class ModelResponse(
     val text: String,
     val functionCalls: List<ModelFunctionCall> = emptyList(),
@@ -65,7 +122,9 @@ data class ModelAttempt(
     val response: ModelResponse? = null,
     val httpStatus: Int? = null,
     val errorCode: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val errorCategory: ProviderErrorCategory = if (response != null) ProviderErrorCategory.NONE else
+        ProviderErrorClassifier.classify(httpStatus, errorCode, errorMessage.orEmpty())
 ) {
     val isSuccess: Boolean get() = response != null
 
@@ -75,6 +134,11 @@ data class ModelAttempt(
         const val NETWORK = "NETWORK"
         const val TIMEOUT = "TIMEOUT"
         const val EMPTY_RESPONSE = "EMPTY_RESPONSE"
+        const val AUTHENTICATION = "AUTHENTICATION_ERROR"
+        const val INVALID_API_KEY = "INVALID_API_KEY"
+        const val MISSING_API_KEY = "MISSING_API_KEY"
+        const val RATE_LIMITED = "RATE_LIMITED"
+        const val QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
 
         fun from(response: ModelResponse, httpStatus: Int? = 200): ModelAttempt =
             if (response.text.isBlank() && response.functionCalls.isEmpty()) {
@@ -99,6 +163,11 @@ interface ModelClient {
 // Installed by RequestPipeline so every model call made for a request reports its token usage.
 class UsageRecorder(val record: (TokenUsage) -> Unit) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<UsageRecorder>
+}
+
+// Installed by RequestPipeline so AIRouter can add provider attempts to the content-free trace.
+class ProviderTraceRecorder(val record: (ProviderAttemptTrace) -> Unit) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ProviderTraceRecorder>
 }
 
 // Installed by RequestPipeline when the UI wants the final answer streamed as it is generated.

@@ -288,6 +288,31 @@ class AgentPipelineTest {
     }
 
     @Test
+    fun bangaloreGeocodingRejectsWrongCountryAndReturnsFullIndianLocation() = runBlocking<Unit> {
+        var geocodeCalls = 0
+        val http: HttpGet = { url ->
+            if (url.contains("geocoding")) {
+                geocodeCalls++
+                if (geocodeCalls == 1) {
+                    """{"results":[{"name":"Bangalore Town","admin1":"Punjab","country":"Pakistan","country_code":"PK","latitude":31.5,"longitude":74.3}]}"""
+                } else {
+                    """{"results":[{"name":"Bengaluru","admin1":"Karnataka","country":"India","country_code":"IN","population":8443675,"latitude":12.97,"longitude":77.59}]}"""
+                }
+            } else {
+                """{"current":{"temperature_2m":27.5,"weather_code":2},"daily":{"time":["2026-09-30"],"weather_code":[2],"temperature_2m_max":[30.1],"temperature_2m_min":[20.2],"precipitation_probability_max":[20]}}"""
+            }
+        }
+
+        val result = WeatherClient(http) { clockMillis }.fetch("Bangalore", 0)
+
+        assertEquals("Bengaluru, Karnataka, India", result.location)
+        assertEquals("Bengaluru", result.city)
+        assertEquals("Karnataka", result.region)
+        assertEquals("India", result.country)
+        assertEquals(2, geocodeCalls)
+    }
+
+    @Test
     fun weatherNetworkFailureRetriesBoundedThenFallsBackToWebSearch() = runBlocking<Unit> {
         val (http, calls) = weatherHttp(alwaysFail = true)
         val search = FakeTool("open_web_search", ToolRisk.LAUNCH, listOf(ToolParam("query", "string", "q", true)))

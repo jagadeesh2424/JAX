@@ -175,7 +175,12 @@ class GeminiRestClient : ModelClient {
         withContext(Dispatchers.IO) {
             val key = apiKey.trim()
             if (key.isBlank()) {
-                return@withContext ModelAttempt(httpStatus = 401, errorCode = "MISSING_API_KEY", errorMessage = "Gemini API key is missing.")
+                return@withContext ModelAttempt(
+                    httpStatus = 401,
+                    errorCode = ModelAttempt.MISSING_API_KEY,
+                    errorMessage = "Gemini API key is missing.",
+                    errorCategory = ProviderErrorCategory.AUTHENTICATION_ERROR
+                )
             }
             val model = request.model.removePrefix("models/").trim()
             val streaming = onText != null
@@ -201,7 +206,12 @@ class GeminiRestClient : ModelClient {
                         } else {
                             parsedCode
                         }
-                        return@withContext ModelAttempt(httpStatus = status, errorCode = code, errorMessage = message)
+                        return@withContext ModelAttempt(
+                            httpStatus = status,
+                            errorCode = code,
+                            errorMessage = message,
+                            errorCategory = ProviderErrorClassifier.classify(status, code, message)
+                        )
                     }
                     val response = if (onText != null) {
                         val stream = SseAccumulator()

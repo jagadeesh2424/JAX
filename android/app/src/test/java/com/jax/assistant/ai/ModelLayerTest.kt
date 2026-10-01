@@ -226,8 +226,8 @@ class ModelLayerTest {
 
     private fun fakeFirebase(answer: (ModelRequest) -> ModelAttempt) = FakeClient("Firebase AI Logic", false, false, answer)
 
-    private fun router(rest: ModelClient, firebase: ModelClient) =
-        AIRouter(null, restClient = rest, firebaseClient = firebase, discoverModels = { emptyList() })
+    private fun router(rest: ModelClient, firebase: ModelClient, groq: ModelClient = fakeGroq { ok("unused") }) =
+        AIRouter(null, restClient = rest, firebaseClient = firebase, groqClient = groq, discoverModels = { emptyList() })
 
     private fun ask(text: String) = ModelRequest(messages = listOf(ModelMessage.user(text)))
 
@@ -273,24 +273,26 @@ class ModelLayerTest {
     }
 
     @Test
-    fun serverErrorFallsBackToAnotherModelAndCoolsTheFailedOneDown() = runBlocking<Unit> {
-        var calls = 0
-        val rest = fakeRest { request ->
-            calls++
-            if (calls == 1) ModelAttempt(httpStatus = 503, errorCode = "UNAVAILABLE", errorMessage = "overloaded")
-            else ok("answer from ${request.model}")
-        }
-        val r = router(rest, fakeFirebase { ok("unused") }).apply { backend = AiBackend.DIRECT }
+    fun autoFallsBackToGroqAfterOneGeminiDirectAttempt() = runBlocking<Unit> {
+        val firebase = fakeFirebase { notConfigured }
+        val rest = fakeRest { ModelAttempt(httpStatus = 503, errorCode = "UNAVAILABLE", errorMessage = "overloaded") }
+        val groq = fakeGroq { ok("answer from Groq") }
+        val r = router(rest, firebase, groq)
 
-        val response = r.routeRequest(ask("hello"), apiKey = "key")
+        val response = r.routeRequest(
+            ask("hello"),
+            apiKey = "gemini-key",
+            groqApiKey = "groq-key",
+            groqEnabled = true
+        )
 
-        val failedModel = rest.requests[0].model
-        val usedModel = rest.requests[1].model
-        assertNotEquals(failedModel, usedModel)
-        assertEquals("answer from $usedModel", response.text)
-        val failed = r.getModels().single { it.id == failedModel }
-        assertEquals(1, failed.failureCount)
-        assertTrue(failed.cooldownUntil > System.currentTimeMillis())
+        assertEquals("answer from Groq", response.text)
+        assertEquals(1, firebase.requests.size)
+        assertEquals(1, rest.requests.size)
+        assertEquals(1, groq.requests.size)
+        assertEquals(ProviderErrorCategory.SERVER_ERROR, r.requestLogs.value[1].errorCategory)
+        assertEquals("Gemini API", r.requestLogs.value[0].fallbackFrom)
+        assertTrue(r.getProviderUsage()["Groq"]!!.requestCount == 1)
     }
 
     @Test
@@ -312,4 +314,53 @@ class ModelLayerTest {
 
         assertEquals(listOf("Hello there"), seen)
     }
+
+    @Test
+    fun quotaFallsThroughFirebaseDirectAndGroqWithoutLooping() = runBlocking<Unit> {
+        val firebase = fakeFirebase { ModelAttempt(httpStatus = 429, errorCode = "RATE_LIMITED", errorMessage = "busy") }
+        val rest = fakeRest { ModelAttempt(httpStatus = 429, errorCode = "QUOTA_EXCEEDED", errorMessage = "quota") }
+        val groq = fakeGroq { ok("Groq recovered") }
+        val r = router(rest, firebase, groq)
+
+        val response = r.routeRequest(ask("How are you?"), "gemini-key", groqApiKey = "groq-key", groqEnabled = true)
+
+        assertEquals("Groq recovered", response.text)
+        assertEquals(1, firebase.requests.size)
+        assertEquals(1, rest.requests.size)
+        assertEquals(1, groq.requests.size)
+        assertEquals("Gemini API", r.requestLogs.value[0].fallbackFrom)
+        assertEquals("QUOTA_EXCEEDED", r.requestLogs.value[0].fallbackReason)
+        assertEquals("GENERAL_CONVERSATION", r.requestLogs.value[0].route)
+        assertEquals("Firebase AI Logic → Gemini API → Groq", r.requestLogs.value[0].fallbackChain)
+        assertEquals(3, r.requestLogs.value[0].modelCallCount)
+        assertTrue(r.requestLogs.value[0].routingReason!!.contains("QUOTA_EXCEEDED"))
+    }
+
+    @Test
+    fun groqWireCarriesSystemJsonAndOpenAiToolSchema() {
+        val body = GroqWire.requestBody(
+            ModelRequest(
+                messages = listOf(ModelMessage.user("What time is it?")),
+                systemInstruction = "You are JAX.",
+                tools = listOf(createTask),
+                json = true
+            ),
+            modelId = "openai/gpt-oss-20b",
+            stream = false
+        )
+
+        assertEquals("openai/gpt-oss-20b", body.getString("model"))
+        assertEquals("system", body.getJSONArray("messages").getJSONObject(0).getString("role"))
+        assertEquals("function", body.getJSONArray("tools").getJSONObject(0).getString("type"))
+        assertEquals("json_object", body.getJSONObject("response_format").getString("type"))
+    }
+
+    @Test
+    fun groqMissingKeyIsClassifiedAsAuthentication() = runBlocking<Unit> {
+        val attempt = GroqModelClient().generate(ask("hi"), "  ")
+        assertEquals(ProviderErrorCategory.AUTHENTICATION_ERROR, attempt.errorCategory)
+        assertEquals(ModelAttempt.AUTHENTICATION, attempt.errorCode)
+    }
+
+    private fun fakeGroq(answer: (ModelRequest) -> ModelAttempt) = FakeClient("Groq", true, true, answer)
 }

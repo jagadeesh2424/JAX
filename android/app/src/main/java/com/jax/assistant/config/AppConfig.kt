@@ -16,6 +16,9 @@ object AppConfig {
     /** Default Gemini model used until you pick another one in Settings. */
     const val DEFAULT_MODEL = "gemini-2.5-flash"
 
+    /** Default Groq model; keep configurable because hosted model availability can change. */
+    const val DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+
     /** How many recent chat messages are sent to the AI as rolling context. */
     const val CONVERSATION_CONTEXT_TURNS = 8
 
