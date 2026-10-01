@@ -3,6 +3,7 @@ package com.jax.assistant.ai.agent.tools
 import com.jax.assistant.ai.agent.JaxTool
 import com.jax.assistant.ai.agent.ToolParam
 import com.jax.assistant.ai.agent.ToolResult
+import com.jax.assistant.ai.agent.Verification
 import com.jax.assistant.data.UserPreferencesRepository
 import org.json.JSONObject
 
@@ -16,6 +17,7 @@ class UpdateProfileTool(private val prefs: UserPreferencesRepository) : JaxTool 
         ToolParam("note", "string", "A concise fact or preference to remember about the user", true)
     )
     override val isDestructive = false
+    override val writesDurableMemory = true
 
     override suspend fun execute(args: JSONObject): ToolResult {
         val note = args.optString("note").trim()
@@ -25,4 +27,8 @@ class UpdateProfileTool(private val prefs: UserPreferencesRepository) : JaxTool 
         prefs.saveUserProfile(updated)
         return ToolResult.ok("Noted about you: $note")
     }
+
+    override suspend fun verify(args: JSONObject, result: ToolResult): Verification =
+        if (prefs.getUserProfile().contains(args.optString("note").trim())) Verification.verified("profile updated")
+        else Verification.failed("profile was not updated")
 }

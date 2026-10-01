@@ -26,6 +26,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jax.assistant.ai.AiBackend
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
@@ -43,6 +44,8 @@ import com.jax.assistant.ui.screens.settings.ProviderDiagnosticsCard
 fun SettingsScreen(
     apiKey: String,
     onUpdateApiKey: (String) -> Unit,
+    aiBackend: AiBackend = AiBackend.AUTO,
+    onChangeAiBackend: (AiBackend) -> Unit = {},
     selectedModel: String = "gemini-2.0-flash",
     onUpdateSelectedModel: (String) -> Unit = {},
     onTestConnection: ((onResult: (TestConnectionResult) -> Unit) -> Unit)? = null,
@@ -245,6 +248,39 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceDark, shape = RoundedCornerShape(14.dp))
+                .padding(16.dp)
+        ) {
+            Text("AI BACKEND", color = CyanAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Firebase AI Logic keeps the Gemini key in your Firebase project, so nothing is stored on this phone. " +
+                    "Auto uses it and falls back to your own API key if Firebase AI Logic isn't set up.",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(AiBackend.AUTO to "Auto", AiBackend.FIREBASE to "Firebase", AiBackend.DIRECT to "API key").forEach { (option, label) ->
+                    val selected = option == aiBackend
+                    OutlinedButton(
+                        onClick = { onChangeAiBackend(option) },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (selected) CyanAccent.copy(alpha = 0.2f) else Color.Transparent,
+                            contentColor = if (selected) CyanAccent else Color.LightGray
+                        )
+                    ) {
+                        Text(label, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // API Key Card
         Column(

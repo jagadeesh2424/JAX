@@ -54,7 +54,8 @@ fun OmniChatScreen(
     isListening: Boolean = false,
     conversationMode: Boolean = false,
     onToggleConversationMode: () -> Unit = {},
-    onNewChat: () -> Unit = {}
+    onNewChat: () -> Unit = {},
+    streamingReply: String = ""
 ) {
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -63,8 +64,8 @@ fun OmniChatScreen(
         if (voiceDraft.isNotBlank()) inputText = voiceDraft
     }
 
-    // Keep the newest message (or the thinking indicator) in view.
-    LaunchedEffect(messages.size, isProcessing) {
+    // Keep the newest message (or the thinking indicator / streaming answer) in view.
+    LaunchedEffect(messages.size, isProcessing, streamingReply.length / 80) {
         val lastIndex = messages.size - (if (isProcessing) 0 else 1)
         if (lastIndex >= 0) listState.animateScrollToItem(lastIndex)
     }
@@ -131,7 +132,21 @@ fun OmniChatScreen(
                     }
                 }
             }
-            if (isProcessing) {
+            if (isProcessing && streamingReply.isNotBlank()) {
+                item(key = "streaming") {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        Box(
+                            modifier = Modifier
+                                .widthIn(max = 280.dp)
+                                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 4.dp, bottomEnd = 16.dp))
+                                .background(SurfaceDark)
+                                .padding(14.dp)
+                        ) {
+                            Text(text = streamingReply, color = Color.White, fontSize = 14.sp)
+                        }
+                    }
+                }
+            } else if (isProcessing) {
                 item(key = "thinking") {
                     Text(
                         text = "J.A.X. is thinking\u2026",

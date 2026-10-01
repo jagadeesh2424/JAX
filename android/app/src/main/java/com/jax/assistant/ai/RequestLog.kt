@@ -9,5 +9,7 @@ data class RequestLog(
     val errorCode: String?,
     val errorMessage: String?,
     val retryCount: Int,
-    val isSuccess: Boolean
+    val isSuccess: Boolean,
+    val promptTokens: Int = 0,
+    val outputTokens: Int = 0
 )

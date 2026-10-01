@@ -111,8 +111,31 @@ object ModelCatalog {
         }
     }
 
+    // Used when models cannot be discovered (no key, e.g. Firebase AI Logic, or offline).
     fun getFallbackModels(): List<ModelInfo> {
         return listOf(
+            ModelInfo(
+                id = "gemini-2.5-flash",
+                displayName = "Gemini 2.5 Flash",
+                provider = "Gemini",
+                priority = 5,
+                speedScore = 8,
+                reasoningScore = 9,
+                contextWindow = 1048576,
+                supportsJson = true,
+                supportedMethods = "generateContent, countTokens"
+            ),
+            ModelInfo(
+                id = "gemini-2.5-flash-lite",
+                displayName = "Gemini 2.5 Flash-Lite",
+                provider = "Gemini",
+                priority = 5,
+                speedScore = 10,
+                reasoningScore = 7,
+                contextWindow = 1048576,
+                supportsJson = true,
+                supportedMethods = "generateContent, countTokens"
+            ),
             ModelInfo(
                 id = "gemini-2.0-flash",
                 displayName = "Gemini 2.0 Flash",
@@ -120,17 +143,6 @@ object ModelCatalog {
                 priority = 6,
                 speedScore = 9,
                 reasoningScore = 8,
-                contextWindow = 1048576,
-                supportsJson = true,
-                supportedMethods = "generateContent, countTokens"
-            ),
-            ModelInfo(
-                id = "gemini-1.5-flash",
-                displayName = "Gemini 1.5 Flash",
-                provider = "Gemini",
-                priority = 8,
-                speedScore = 8,
-                reasoningScore = 7,
                 contextWindow = 1048576,
                 supportsJson = true,
                 supportedMethods = "generateContent, countTokens"

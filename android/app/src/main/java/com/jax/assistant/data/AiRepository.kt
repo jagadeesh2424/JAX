@@ -2,18 +2,25 @@ package com.jax.assistant.data
 
 import android.content.Context
 import android.net.Uri
+import com.jax.assistant.ai.AiBackend
 import com.jax.assistant.ai.EmbeddingService
 import com.jax.assistant.ai.GeminiAIService
 import com.jax.assistant.ai.GeminiBrain
 import com.jax.assistant.ai.JaxParseResult
 import com.jax.assistant.ai.MemoryEngine
 import com.jax.assistant.ai.ModelInfo
+import com.jax.assistant.ai.ModelMessage
+import com.jax.assistant.ai.ModelRequest
+import com.jax.assistant.ai.ModelResponse
+import com.jax.assistant.ai.ModelToolSpec
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TaskCapability
 import com.jax.assistant.ai.TestConnectionResult
+import com.jax.assistant.ai.TextStreamSink
 import com.jax.assistant.ai.VisionService
 import com.jax.assistant.db.FactEntity
 import com.jax.assistant.db.TaskEntity
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.StateFlow
 
 // Owns the Gemini AI stack (service, router, brain) and conversational processing.
@@ -27,6 +34,14 @@ class AiRepository(context: Context, initialApiKey: String) {
     fun updateApiKey(key: String) {
         aiService.apiKey = key.trim()
     }
+
+    fun setBackend(backend: AiBackend) {
+        aiService.router.backend = backend
+    }
+
+    fun backendName(): String = aiService.router.backendName(aiService.apiKey)
+
+    fun nativeToolsAvailable(): Boolean = aiService.router.nativeToolsAvailable(aiService.apiKey)
 
     val requestLogs: StateFlow<List<RequestLog>> get() = aiService.router.requestLogs
 
@@ -44,6 +59,31 @@ class AiRepository(context: Context, initialApiKey: String) {
     // Agent tool loops favor capable reasoning models and require machine-readable output.
     suspend fun generateAgent(prompt: String, model: String): String =
         aiService.generateFor(prompt, model, TaskCapability.COMPLEX_REASONING, requireJson = true)
+
+    // Plain-text answer for the user; streamed when the request installed a TextStreamSink.
+    suspend fun generateAnswer(prompt: String, model: String, systemInstruction: String? = null): String =
+        aiService.router.routeRequest(
+            ModelRequest(messages = listOf(ModelMessage.user(prompt)), systemInstruction = systemInstruction),
+            aiService.apiKey,
+            model,
+            TaskCapability.LONG_SUMMARY,
+            onText = currentCoroutineContext()[TextStreamSink]?.onText
+        ).text
+
+    // One model call with native tool declarations (Gemini function calling).
+    suspend fun callWithTools(
+        systemInstruction: String,
+        messages: List<ModelMessage>,
+        tools: List<ModelToolSpec>,
+        model: String,
+        stream: Boolean
+    ): ModelResponse = aiService.router.routeRequest(
+        ModelRequest(messages = messages, systemInstruction = systemInstruction, tools = tools),
+        aiService.apiKey,
+        model,
+        TaskCapability.COMPLEX_REASONING,
+        onText = if (stream) currentCoroutineContext()[TextStreamSink]?.onText else null
+    )
 
     suspend fun embed(text: String): FloatArray? = embeddingService.embed(text)
 

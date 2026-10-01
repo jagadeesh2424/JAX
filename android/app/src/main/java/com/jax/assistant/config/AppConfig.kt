@@ -14,10 +14,16 @@ object AppConfig {
     // AI
     // ---------------------------------------------------------------------
     /** Default Gemini model used until you pick another one in Settings. */
-    const val DEFAULT_MODEL = "gemini-2.0-flash"
+    const val DEFAULT_MODEL = "gemini-2.5-flash"
 
     /** How many recent chat messages are sent to the AI as rolling context. */
     const val CONVERSATION_CONTEXT_TURNS = 8
+
+    /** City used for weather when the request names none (JAX does not read device location). */
+    const val DEFAULT_WEATHER_LOCATION = "Bengaluru"
+
+    /** Notification channel for time-based reminders. */
+    const val REMINDER_CHANNEL_ID = "jax_reminder_channel"
 
     // ---------------------------------------------------------------------
     // Voice

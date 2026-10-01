@@ -122,6 +122,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isProcessing = MutableStateFlow<Boolean>(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
+    // The answer text so far while J.A.X. is still generating it (empty when not streaming).
+    private val _streamingReply = MutableStateFlow("")
+    val streamingReply: StateFlow<String> = _streamingReply.asStateFlow()
+
+    private val _aiBackend = MutableStateFlow(repository.getAiBackend())
+    val aiBackend: StateFlow<com.jax.assistant.ai.AiBackend> = _aiBackend.asStateFlow()
+
     private val _isListening = MutableStateFlow<Boolean>(false)
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
 
@@ -177,8 +184,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isAnalyzingImage: StateFlow<Boolean> = _isAnalyzingImage.asStateFlow()
 
     init {
-        // Crash recovery: close out agent runs interrupted by a previous process death.
-        launchSafely { repository.reconcileInterruptedAgentRuns() }
+        // Crash recovery: close out agent runs interrupted by a previous process death and tell
+        // the user where they stopped. Nothing is replayed automatically; "resume" continues safely.
+        launchSafely {
+            val interrupted = repository.reconcileInterruptedAgentRuns()
+            if (interrupted.isNotEmpty()) {
+                _notice.value = "A previous request was interrupted: ${interrupted.first()}"
+            }
+        }
         // Restore persisted chat history, keeping anything typed while it was loading.
         launchSafely {
             val stored = repository.getChatHistory()
@@ -209,12 +222,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setConversationMode(enabled: Boolean) { _conversationMode.value = enabled }
 
-    // Records a user command + JAX confirmation in the chat without invoking the AI (used for device actions).
-    fun logAssistantAction(userText: String, replyText: String) {
-        pushMessage(userText, isUser = true)
-        pushMessage(replyText, isUser = false)
-    }
-
     // Appends a chat message to the UI and persists it. IDs are UUIDs (list keys must be
     // unique) and timestamps are strictly increasing so persisted history keeps its order.
     private fun pushMessage(text: String, isUser: Boolean) {
@@ -226,8 +233,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Clears chat history and starts a fresh session.
+    // Clears chat history and the current task state, and starts a fresh session.
     fun startNewChat() {
+        repository.clearWorkingMemory()
         launchSafely {
             repository.clearChatHistory()
             _messages.value = listOf(greeting(GREETING_TEXT))
@@ -271,7 +279,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             turnLock.withLock {
                 _isProcessing.value = true
                 val reply = try {
-                    repository.runAgent(input, allFacts.value, conversationSummary) { awaitUserConfirmation(it) }
+                    repository.runAgent(
+                        input,
+                        allFacts.value,
+                        conversationSummary,
+                        onPartial = { partial -> _streamingReply.value = partial }
+                    ) { awaitUserConfirmation(it) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -281,6 +294,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _pendingConfirmation.value = null
                     pendingApproval = null
                     _isProcessing.value = false
+                    _streamingReply.value = ""
                 }
                 pushMessage(reply, isUser = false)
                 onSpeak?.invoke(reply)
@@ -305,6 +319,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resolveToolConfirmation(approved: Boolean) {
         pendingApproval?.complete(approved)
     }
+
+    fun setAiBackend(backend: com.jax.assistant.ai.AiBackend) {
+        repository.setAiBackend(backend)
+        _aiBackend.value = backend
+    }
+
+    fun aiBackendName(): String = repository.aiBackendName()
+
+    fun liveSystemInstruction(): String = repository.liveSystemInstruction()
 
     fun toggleTask(task: TaskEntity) {
         launchSafely { repository.updateTask(task.copy(isCompleted = !task.isCompleted)) }

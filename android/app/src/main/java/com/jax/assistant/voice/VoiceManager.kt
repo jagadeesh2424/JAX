@@ -3,6 +3,8 @@ package com.jax.assistant.voice
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -16,17 +18,22 @@ class VoiceManager(
     private val onPartialSpeechResult: (String) -> Unit = {},
     private val onError: (String) -> Unit = {},
     private val onListeningStateChanged: (Boolean) -> Unit = {},
-    private val onSpeakingStateChanged: (Boolean) -> Unit = {}
+    private val onSpeakingStateChanged: (Boolean) -> Unit = {},
+    private val onSpeechStart: () -> Unit = {}
 ) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = TextToSpeech(context, this)
     private var speechRecognizer: SpeechRecognizer? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var retries = 0
+    private var preferOffline = false
 
     init {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onResults(results: Bundle?) {
+                        retries = 0
                         onListeningStateChanged(false)
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
@@ -34,13 +41,24 @@ class VoiceManager(
                         }
                     }
                     override fun onReadyForSpeech(params: Bundle?) { onListeningStateChanged(true) }
-                    override fun onBeginningOfSpeech() {}
+                    override fun onBeginningOfSpeech() { onSpeechStart() }
                     override fun onRmsChanged(rmsdB: Float) {}
                     override fun onBufferReceived(buffer: ByteArray?) {}
                     override fun onEndOfSpeech() { onListeningStateChanged(false) }
                     override fun onError(error: Int) {
-                        onListeningStateChanged(false)
-                        onError(describeError(error))
+                        // Network drops and a busy recognizer get one bounded retry (on-device
+                        // recognition for network errors) instead of a dead-end error.
+                        when (VoiceRecovery.onRecognizerError(error, retries)) {
+                            VoiceRecovery.Action.RETRY, VoiceRecovery.Action.RETRY_OFFLINE -> {
+                                retries++
+                                preferOffline = preferOffline || error != SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                                mainHandler.postDelayed({ listen() }, RETRY_DELAY_MS)
+                            }
+                            VoiceRecovery.Action.REPORT -> {
+                                onListeningStateChanged(false)
+                                onError(describeError(error))
+                            }
+                        }
                     }
                     override fun onPartialResults(partialResults: Bundle?) {
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -65,6 +83,13 @@ class VoiceManager(
     }
 
     fun startListening() {
+        retries = 0
+        preferOffline = false
+        mainHandler.removeCallbacksAndMessages(null)
+        listen()
+    }
+
+    private fun listen() {
         val recognizer = speechRecognizer
         if (recognizer == null) {
             onError("Speech recognition is not available on this device.")
@@ -76,13 +101,14 @@ class VoiceManager(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, com.jax.assistant.config.AppConfig.VOICE_LANGUAGE)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, com.jax.assistant.config.AppConfig.VOICE_MAX_RESULTS)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
         }
         recognizer.cancel()
         recognizer.startListening(intent)
     }
 
     fun stopListening() {
+        mainHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.stopListening()
         onListeningStateChanged(false)
     }
@@ -100,6 +126,7 @@ class VoiceManager(
     }
 
     fun shutdown() {
+        mainHandler.removeCallbacksAndMessages(null)
         tts?.stop()
         tts?.shutdown()
         speechRecognizer?.destroy()
@@ -119,19 +146,10 @@ class VoiceManager(
     }
 
     companion object {
-        private val WAKE_PHRASES = com.jax.assistant.config.AppConfig.WAKE_PHRASES
+        private const val RETRY_DELAY_MS = 400L
 
         /** Removes a leading wake phrase (e.g. "Hey JAX, add a task" -> "add a task"). */
-        fun stripWakePhrase(text: String): String {
-            val trimmed = text.trim()
-            val lower = trimmed.lowercase(Locale.US)
-            for (phrase in WAKE_PHRASES) {
-                if (lower.startsWith(phrase)) {
-                    val remainder = trimmed.substring(phrase.length).trimStart(' ', ',', '.', '!', '?')
-                    return remainder.ifBlank { trimmed }
-                }
-            }
-            return trimmed
-        }
+        fun stripWakePhrase(text: String): String =
+            com.jax.assistant.ai.agent.InputNormalizer.normalize(text)
     }
 }

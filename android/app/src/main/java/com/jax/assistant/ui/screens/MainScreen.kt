@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jax.assistant.ai.AiBackend
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
@@ -135,6 +136,9 @@ fun MainScreen(
     ,onChooseVisionImage: () -> Unit = {}
     ,pendingConfirmation: ToolConfirmation? = null
     ,onResolveConfirmation: (Boolean) -> Unit = {}
+    ,streamingReply: String = ""
+    ,aiBackend: AiBackend = AiBackend.AUTO
+    ,onChangeAiBackend: (AiBackend) -> Unit = {}
 ) {
     var activeTab by remember { mutableStateOf(initialTab) } // 0: Chat, 1: Tasks, 2: Calendar, 3: Memory Vault, 4: Briefing, 5: Settings, 6: Notes, 7: Executive Dashboard
     var showDevConsole by remember { mutableStateOf(false) }
@@ -285,7 +289,8 @@ fun MainScreen(
                     isListening = isListening,
                     conversationMode = conversationMode,
                     onToggleConversationMode = onToggleConversationMode,
-                    onNewChat = onNewChat
+                    onNewChat = onNewChat,
+                    streamingReply = streamingReply
                 )
                 1 -> TaskDashboardScreen(
                     tasks = tasks,
@@ -366,6 +371,8 @@ fun MainScreen(
                 5 -> SettingsScreen(
                     apiKey = apiKey,
                     onUpdateApiKey = onUpdateApiKey,
+                    aiBackend = aiBackend,
+                    onChangeAiBackend = onChangeAiBackend,
                     selectedModel = selectedModel,
                     onUpdateSelectedModel = onUpdateSelectedModel,
                     onTestConnection = onTestConnection,

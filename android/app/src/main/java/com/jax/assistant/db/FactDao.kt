@@ -17,6 +17,9 @@ interface FactDao {
     @Query("SELECT * FROM facts WHERE title LIKE '%' || :query || '%' OR details LIKE '%' || :query || '%' ORDER BY createdAt DESC")
     suspend fun searchFactsList(query: String): List<FactEntity>
 
+    @Query("SELECT * FROM facts WHERE id = :id")
+    suspend fun getFactById(id: String): FactEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFact(fact: FactEntity)
 

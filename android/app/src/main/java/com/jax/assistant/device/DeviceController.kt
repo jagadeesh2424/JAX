@@ -10,16 +10,22 @@ import android.provider.MediaStore
 import android.provider.Settings
 import java.util.Locale
 import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
+import com.jax.assistant.ai.agent.tools.DateTimeTool
 
-/** Executes [DeviceCommand]s via Android framework intents. Returns a user-facing result message. */
+/** Outcome of a device action. `launched` is true only when Android accepted the intent. */
+data class DeviceActionResult(val launched: Boolean, val message: String)
+
+/** Executes [DeviceCommand]s via Android framework intents. */
 class DeviceController(private val context: Context) {
 
-    fun execute(command: DeviceCommand): String = when (command) {
-        is DeviceCommand.CurrentDateTime -> currentDateTime(command)
+    fun execute(command: DeviceCommand): String = run(command).message
+
+    fun run(command: DeviceCommand): DeviceActionResult = when (command) {
+        is DeviceCommand.CurrentDateTime ->
+            DeviceActionResult(true, DateTimeTool.describe(ZonedDateTime.now(), command.includeDate, command.includeTime))
         is DeviceCommand.OpenApp -> launchApp(command.appName)
         is DeviceCommand.WebSearch -> webSearch(command.query)
-        is DeviceCommand.Weather -> weather(command.location)
+        is DeviceCommand.Weather -> webSearch(weatherQuery(command.location))
         is DeviceCommand.Dial -> dial(command.number)
         is DeviceCommand.Navigate -> navigate(command.destination)
         is DeviceCommand.SetAlarm -> setAlarm(command.hour, command.minute, command.label)
@@ -38,7 +44,10 @@ class DeviceController(private val context: Context) {
         false
     }
 
-    private fun launchApp(query: String): String {
+    private fun outcome(launched: Boolean, success: String, failure: String) =
+        DeviceActionResult(launched, if (launched) success else failure)
+
+    private fun launchApp(query: String): DeviceActionResult {
         val pm = context.packageManager
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val apps = pm.queryIntentActivities(mainIntent, 0)
@@ -47,54 +56,32 @@ class DeviceController(private val context: Context) {
         val match = apps.firstOrNull { it.loadLabel(pm).toString().lowercase(Locale.US) == q }
             ?: apps.firstOrNull { it.loadLabel(pm).toString().lowercase(Locale.US).contains(q) }
 
-        if (match != null) {
-            val launch = pm.getLaunchIntentForPackage(match.activityInfo.packageName)
-            if (launch != null && start(launch)) {
-                return "Opening ${match.loadLabel(pm)}."
-            }
-        }
-        return "I couldn't find an app called \"$query\"."
+        val launch = match?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
+        val launched = launch != null && start(launch)
+        return outcome(launched, "Opening ${match?.loadLabel(pm)}.", "I couldn't find an app called \"$query\".")
     }
 
-    private fun webSearch(query: String): String {
+    private fun webSearch(query: String): DeviceActionResult {
         val search = Intent(Intent.ACTION_WEB_SEARCH).apply { putExtra(SearchManager.QUERY, query) }
-        if (start(search)) return "Searching the web for \"$query\"."
-        val url = "https://www.google.com/search?q=" + Uri.encode(query)
-        return if (start(Intent(Intent.ACTION_VIEW, Uri.parse(url)))) {
-            "Searching the web for \"$query\"."
-        } else {
-            "I couldn't start a web search."
-        }
+        val launched = start(search) ||
+            start(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))))
+        return outcome(launched, "Searching the web for \"$query\".", "I couldn't start a web search.")
     }
 
-    private fun currentDateTime(command: DeviceCommand.CurrentDateTime): String {
-        val now = ZonedDateTime.now()
-        val time = now.format(DateTimeFormatter.ofPattern("h:mm a z", Locale.getDefault()))
-        val date = now.format(DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.getDefault()))
-        return when {
-            command.includeDate && command.includeTime -> "It's $time on $date."
-            command.includeDate -> "Today is $date."
-            else -> "It's $time."
-        }
-    }
-
-    private fun weather(location: String?): String {
+    private fun weatherQuery(location: String?): String {
         val place = location?.trim().orEmpty()
-        val query = if (place.isBlank()) "current weather today" else "current weather today in $place"
-        return webSearch(query)
+        return if (place.isBlank()) "current weather today" else "current weather today in $place"
     }
 
-    private fun dial(number: String): String {
-        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
-        return if (start(intent)) "Dialing $number." else "I couldn't open the dialer."
-    }
+    private fun dial(number: String): DeviceActionResult =
+        outcome(start(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))), "Dialing $number.", "I couldn't open the dialer.")
 
-    private fun navigate(destination: String): String {
+    private fun navigate(destination: String): DeviceActionResult {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(destination)))
-        return if (start(intent)) "Getting directions to $destination." else "I couldn't open maps."
+        return outcome(start(intent), "Getting directions to $destination.", "I couldn't open maps.")
     }
 
-    private fun setAlarm(hour: Int, minute: Int, label: String?): String {
+    private fun setAlarm(hour: Int, minute: Int, label: String?): DeviceActionResult {
         val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
             putExtra(AlarmClock.EXTRA_HOUR, hour)
             putExtra(AlarmClock.EXTRA_MINUTES, minute)
@@ -102,25 +89,21 @@ class DeviceController(private val context: Context) {
             putExtra(AlarmClock.EXTRA_SKIP_UI, false)
         }
         val hhmm = String.format(Locale.US, "%02d:%02d", hour, minute)
-        return if (start(intent)) "Setting an alarm for $hhmm." else "I couldn't set the alarm."
+        return outcome(start(intent), "Setting an alarm for $hhmm.", "I couldn't set the alarm.")
     }
 
-    private fun setTimer(seconds: Int, label: String?): String {
+    private fun setTimer(seconds: Int, label: String?): DeviceActionResult {
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
             putExtra(AlarmClock.EXTRA_LENGTH, seconds)
             if (!label.isNullOrBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, label)
             putExtra(AlarmClock.EXTRA_SKIP_UI, false)
         }
-        return if (start(intent)) "Setting a timer for $seconds seconds." else "I couldn't set the timer."
+        return outcome(start(intent), "Setting a timer for $seconds seconds.", "I couldn't set the timer.")
     }
 
-    private fun openCamera(): String {
-        val intent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-        return if (start(intent)) "Opening the camera." else "I couldn't open the camera."
-    }
+    private fun openCamera(): DeviceActionResult =
+        outcome(start(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)), "Opening the camera.", "I couldn't open the camera.")
 
-    private fun openSettings(): String {
-        val intent = Intent(Settings.ACTION_SETTINGS)
-        return if (start(intent)) "Opening settings." else "I couldn't open settings."
-    }
+    private fun openSettings(): DeviceActionResult =
+        outcome(start(Intent(Settings.ACTION_SETTINGS)), "Opening settings.", "I couldn't open settings.")
 }

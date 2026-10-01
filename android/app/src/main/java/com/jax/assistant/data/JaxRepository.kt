@@ -2,30 +2,49 @@ package com.jax.assistant.data
 
 import android.content.Context
 import android.net.Uri
+import com.jax.assistant.ai.AiBackend
 import com.jax.assistant.ai.JaxParseResult
 import com.jax.assistant.ai.MemoryEngine
+import com.jax.assistant.ai.ModelMessage
+import com.jax.assistant.ai.ModelResponse
+import com.jax.assistant.ai.ModelToolSpec
 import com.jax.assistant.ai.VectorUtils
 import com.jax.assistant.ai.ModelInfo
 import com.jax.assistant.ai.agent.AgentController
-import com.jax.assistant.ai.agent.AgentOrchestrator
 import com.jax.assistant.ai.agent.AutonomyLevel
+import com.jax.assistant.ai.agent.ChatDraft
 import com.jax.assistant.ai.agent.ContextAssembler
-import com.jax.assistant.ai.agent.DurableEventSink
+import com.jax.assistant.ai.agent.JaxPersona
+import com.jax.assistant.ai.agent.ProposedAction
+import com.jax.assistant.ai.agent.RequestPipeline
+import com.jax.assistant.ai.agent.RequestTrace
+import com.jax.assistant.ai.agent.ToolCallingModel
 import com.jax.assistant.ai.agent.ToolConfirmation
 import com.jax.assistant.ai.agent.ToolRegistry
+import com.jax.assistant.ai.agent.WorkingMemory
 import com.jax.assistant.ai.agent.tools.CompleteTaskTool
+import com.jax.assistant.ai.agent.tools.CreateReminderTool
 import com.jax.assistant.ai.agent.tools.CreateTaskTool
+import com.jax.assistant.ai.agent.tools.DateTimeTool
 import com.jax.assistant.ai.agent.tools.DialTool
 import com.jax.assistant.ai.agent.tools.NavigateTool
 import com.jax.assistant.ai.agent.tools.OpenAppTool
+import com.jax.assistant.ai.agent.tools.OpenCameraTool
+import com.jax.assistant.ai.agent.tools.OpenSettingsTool
+import com.jax.assistant.ai.agent.tools.OpenWebSearchTool
+import com.jax.assistant.ai.agent.tools.RescheduleReminderTool
 import com.jax.assistant.ai.agent.tools.SearchMemoryTool
 import com.jax.assistant.ai.agent.tools.SearchTasksTool
 import com.jax.assistant.ai.agent.tools.SetAlarmTool
 import com.jax.assistant.ai.agent.tools.SetTimerTool
 import com.jax.assistant.ai.agent.tools.StoreMemoryTool
 import com.jax.assistant.ai.agent.tools.UpdateProfileTool
+import com.jax.assistant.ai.agent.tools.WeatherClient
+import com.jax.assistant.ai.agent.tools.WeatherTool
+import com.jax.assistant.ai.agent.tools.WebFetchTool
 import com.jax.assistant.ai.agent.tools.WebSearchTool
 import com.jax.assistant.device.DeviceController
+import com.jax.assistant.worker.WorkManagerReminderScheduler
 import com.jax.assistant.ai.RequestLog
 import com.jax.assistant.ai.TestConnectionResult
 import com.jax.assistant.db.ChatMessageEntity
@@ -34,10 +53,9 @@ import com.jax.assistant.db.GoalEntity
 import com.jax.assistant.db.HabitEntity
 import com.jax.assistant.db.ProjectEntity
 import com.jax.assistant.db.TaskEntity
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
-import java.util.UUID
+import org.json.JSONObject
 
 // Facade that delegates to focused domain repositories provided by ServiceLocator.
 class JaxRepository(context: Context) {
@@ -54,30 +72,39 @@ class JaxRepository(context: Context) {
     private val chatRepo = locator.chat
     private val agentRunRepo = locator.agentRuns
     private val factEmbeddingRepo = locator.factEmbeddings
+    private val reminderScheduler = WorkManagerReminderScheduler(context.applicationContext)
+    private val controller = AgentController()
+    private val workingMemory = WorkingMemory()
 
-    // Phase 1 agent: tool registry + controlled reasoning loop over the existing AI router.
-    private val agent: AgentOrchestrator by lazy {
-        val registry = ToolRegistry(
+    init {
+        aiRepo.setBackend(prefs.getAiBackend())
+    }
+
+    // Every capability J.A.X. has. Adding a tool here makes it available to all routes.
+    private val registry: ToolRegistry by lazy {
+        ToolRegistry(
             listOf(
+                DateTimeTool(),
+                WeatherTool(WeatherClient()),
                 CreateTaskTool(taskRepo),
+                CreateReminderTool(taskRepo, reminderScheduler),
+                RescheduleReminderTool(taskRepo, reminderScheduler),
                 SearchTasksTool(taskRepo),
                 CompleteTaskTool(taskRepo),
                 StoreMemoryTool(memoryRepo),
                 SearchMemoryTool(memoryRepo),
+                WebSearchTool(),
+                WebFetchTool(),
                 SetAlarmTool(deviceController),
                 SetTimerTool(deviceController),
                 OpenAppTool(deviceController),
-                WebSearchTool(deviceController),
+                OpenCameraTool(deviceController),
+                OpenSettingsTool(deviceController),
+                OpenWebSearchTool(deviceController),
                 NavigateTool(deviceController),
                 DialTool(deviceController),
                 UpdateProfileTool(prefs)
             )
-        )
-        AgentOrchestrator(
-            registry = registry,
-            controller = AgentController(),
-            generate = { prompt, model -> aiRepo.generateAgent(prompt, model) },
-            maxSteps = AGENT_MAX_STEPS
         )
     }
 
@@ -160,108 +187,162 @@ class JaxRepository(context: Context) {
     ): JaxParseResult =
         aiRepo.processUserInput(input, getSelectedModel(), factsList, conversationSummary)
 
-    // Runs one chat turn. Plain conversation takes the single-call brain path; requests that
-    // need tools go through the durable agent loop. Returns J.A.X.'s final reply.
+    // Runs one chat turn (typed or spoken) through the request pipeline:
+    // normalize -> fast route -> direct tool | chat | agent loop | planner -> verified reply.
+    // `onPartial` receives the answer text so far while it streams.
     suspend fun runAgent(
         input: String,
         facts: List<FactEntity> = emptyList(),
         conversationSummary: String = "",
-        // Consulted for SENSITIVE/DESTRUCTIVE tool calls; default approves for non-interactive callers.
+        onPartial: ((String) -> Unit)? = null,
+        // Consulted for HIGH-risk tool calls; default approves for non-interactive callers.
         confirm: suspend (ToolConfirmation) -> Boolean = { true }
     ): String {
-        if (!requiresAgent(input)) {
-            return when (val parsed = aiRepo.processUserInput(input, getSelectedModel(), facts, conversationSummary)) {
-                is JaxParseResult.QuestionResult -> parsed.reply
-                is JaxParseResult.TaskResult -> {
-                    taskRepo.insertTask(parsed.task)
-                    parsed.reply
-                }
-                is JaxParseResult.FactResult -> {
-                    memoryRepo.insertFact(parsed.fact)
-                    parsed.reply
-                }
-                is JaxParseResult.CompleteTaskResult -> completeTaskByReference(parsed.reference, parsed.reply)
-            }
-        }
-
-        val openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
-        val context = ContextAssembler().build(
-            relevantFacts = selectRelevantFactsHybrid(input, facts),
-            openTasks = openTasks,
-            conversationSummary = conversationSummary,
-            currentDate = java.time.LocalDate.now().toString(),
-            userProfile = prefs.getUserProfile(),
-            learnedWorkflows = agentRunRepo.learnedWorkflows()
+        val pipeline = RequestPipeline(
+            registry = registry,
+            controller = controller,
+            runStore = agentRunRepo,
+            workingMemory = workingMemory,
+            modelCall = { prompt, model -> aiRepo.generateAgent(prompt, model) },
+            chat = { text -> chatDraft(text, facts, withWorkingContext(conversationSummary)).reply },
+            buildContext = { text, trace -> buildAgentContext(text, facts, conversationSummary, trace) },
+            selectedModel = { getSelectedModel() },
+            answerCall = { prompt, model -> aiRepo.generateAnswer(prompt, model, JaxPersona.systemInstruction()) },
+            toolModel = toolModel,
+            chatDraft = { text -> chatDraft(text, facts, withWorkingContext(conversationSummary)) }
         )
-        // Durable run: events are flushed to Room as they happen, so a process death mid-run
-        // still leaves an auditable trail that reconcileInterruptedRuns() can close out.
-        val runId = UUID.randomUUID().toString()
-        val sink = DurableEventSink()
-        agentRunRepo.startRun(runId, input, maxSteps = AGENT_MAX_STEPS)
-        try {
-            val result = agent.run(
-                input,
-                getSelectedModel(),
-                context.text,
-                sink,
-                onCheckpoint = { checkpoint ->
-                    agentRunRepo.checkpoint(runId, checkpoint.step, checkpoint.state, checkpoint.toolsUsed)
-                    agentRunRepo.saveEvents(runId, sink.drainPending())
-                },
-                confirm = confirm
-            )
-            agentRunRepo.saveEvents(runId, sink.drainPending())
-            val status = if (sink.snapshot().any { it.type == "error" }) STATUS_COMPLETED_WITH_ERRORS else STATUS_COMPLETED
-            agentRunRepo.finishRun(runId, status, result.reply, result.toolsUsed)
-            return result.reply
-        } catch (e: CancellationException) {
-            // Leave the run RUNNING; startup reconciliation marks it INTERRUPTED.
-            throw e
-        } catch (e: Exception) {
-            agentRunRepo.saveEvents(runId, sink.drainPending())
-            agentRunRepo.finishRun(runId, STATUS_FAILED, e.message.orEmpty(), emptyList())
-            throw e
+        return pipeline.handle(input, onPartial, confirm).reply
+    }
+
+    private val toolModel = object : ToolCallingModel {
+        override fun isAvailable(): Boolean = aiRepo.nativeToolsAvailable()
+
+        override suspend fun call(
+            systemInstruction: String,
+            messages: List<ModelMessage>,
+            tools: List<ModelToolSpec>,
+            stream: Boolean
+        ): ModelResponse = aiRepo.callWithTools(systemInstruction, messages, tools, getSelectedModel(), stream)
+    }
+
+    fun getAiBackend(): AiBackend = prefs.getAiBackend()
+
+    fun setAiBackend(backend: AiBackend) {
+        prefs.setAiBackend(backend)
+        aiRepo.setBackend(backend)
+    }
+
+    fun aiBackendName(): String = aiRepo.backendName()
+
+    // Gemini Live gets the same persona plus the compact conversation state, so voice knows the context.
+    fun liveSystemInstruction(): String {
+        val working = workingMemory.contextBlock()
+        val profile = prefs.getUserProfile()
+        return buildString {
+            append(JaxPersona.systemInstruction())
+            append("\n\nYou are speaking aloud: keep answers short and conversational.")
+            if (profile.isNotBlank()) append("\n\nUSER PROFILE:\n${profile.take(600)}")
+            if (working.isNotBlank()) append("\n\nCURRENT CONTEXT:\n$working")
         }
     }
 
-    // Resolves "mark X done" from the single-call brain against open tasks. Only acts on an
-    // unambiguous match; otherwise asks the user to be more specific.
-    private suspend fun completeTaskByReference(reference: String, modelReply: String): String {
+    // The single-call chat path gets the compact working state (topic, entities, open question)
+    // ahead of the recent dialogue, so follow-ups resolve without resending the whole conversation.
+    private fun withWorkingContext(conversationSummary: String): String {
+        val working = workingMemory.contextBlock()
+        return if (working.isBlank()) conversationSummary
+        else "CURRENT CONTEXT:\n$working\n\n$conversationSummary".trim()
+    }
+
+    // Single-call conversational path. It only proposes an action; RequestPipeline runs it through
+    // ToolExecutor (memory policy, risk gate, verification) instead of writing here.
+    private suspend fun chatDraft(input: String, facts: List<FactEntity>, conversationSummary: String): ChatDraft =
+        when (val parsed = aiRepo.processUserInput(input, getSelectedModel(), facts, conversationSummary)) {
+            is JaxParseResult.QuestionResult -> ChatDraft(parsed.reply)
+            is JaxParseResult.TaskResult -> ChatDraft(
+                parsed.reply,
+                ProposedAction(
+                    "create_task",
+                    JSONObject()
+                        .put("title", parsed.task.title)
+                        .put("category", parsed.task.category)
+                        .put("priority", parsed.task.priority)
+                        .put("deadline", parsed.task.deadline ?: "")
+                )
+            )
+            is JaxParseResult.FactResult -> ChatDraft(
+                parsed.reply,
+                ProposedAction(
+                    "store_memory",
+                    JSONObject()
+                        .put("title", parsed.fact.title)
+                        .put("category", parsed.fact.category)
+                        .put("details", parsed.fact.details)
+                )
+            )
+            is JaxParseResult.CompleteTaskResult -> completeTaskDraft(parsed.reference, parsed.reply)
+        }
+
+    // Only relevant facts (hybrid retrieval, top 6) and bounded sections reach the prompt.
+    private suspend fun buildAgentContext(
+        input: String,
+        facts: List<FactEntity>,
+        conversationSummary: String,
+        trace: RequestTrace
+    ): String = ContextAssembler().build(
+        relevantFacts = selectRelevantFactsHybrid(input, facts, trace),
+        openTasks = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted },
+        conversationSummary = conversationSummary,
+        currentDate = java.time.LocalDate.now().toString(),
+        userProfile = prefs.getUserProfile(),
+        learnedWorkflows = agentRunRepo.learnedWorkflows(),
+        workingState = workingMemory.contextBlock()
+    ).text
+
+    fun clearWorkingMemory() = workingMemory.clear()
+
+    // Resolves "mark X done" from the single-call brain against open tasks. Proposes completion only
+    // for an unambiguous match; otherwise asks the user to be more specific.
+    private suspend fun completeTaskDraft(reference: String, modelReply: String): ChatDraft {
         val words = reference.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length > 2 }
-        if (words.isEmpty()) return "Which task should I mark as done?"
+        if (words.isEmpty()) return ChatDraft("Which task should I mark as done?")
         val open = taskRepo.getAllTasksSnapshot().filter { !it.isCompleted }
         val scored = open
             .map { task -> task to words.count { task.title.lowercase().contains(it) } }
             .filter { it.second > 0 }
-        val best = scored.maxOfOrNull { it.second } ?: return "I couldn't find an open task matching \"$reference\"."
+        val best = scored.maxOfOrNull { it.second }
+            ?: return ChatDraft("I couldn't find an open task matching \"$reference\".")
         val matches = scored.filter { it.second == best }.map { it.first }
         if (matches.size > 1) {
-            return "I found ${matches.size} matching tasks: " +
-                matches.take(3).joinToString(", ") { "\"${it.title}\"" } + ". Which one did you mean?"
+            return ChatDraft(
+                "I found ${matches.size} matching tasks: " +
+                    matches.take(3).joinToString(", ") { "\"${it.title}\"" } + ". Which one did you mean?"
+            )
         }
         val task = matches.single()
-        taskRepo.updateTask(task.copy(isCompleted = true))
-        return modelReply.ifBlank { "Marked \"${task.title}\" as done." }
+        return ChatDraft(
+            modelReply.ifBlank { "Marked \"${task.title}\" as done." },
+            ProposedAction("complete_task", JSONObject().put("id", task.id))
+        )
     }
 
-    // Crash recovery: reconcile agent runs left RUNNING by a previous process death.
-    // Safe to call once at app startup; returns the number of runs reconciled.
-    suspend fun reconcileInterruptedAgentRuns(): Int = agentRunRepo.reconcileInterruptedRuns()
+    // Crash recovery: close out agent runs left RUNNING by a previous process death.
+    // Returns a user-facing line per interrupted run describing where it stopped.
+    suspend fun reconcileInterruptedAgentRuns(): List<String> = agentRunRepo.reconcileInterruptedRuns()
 
-    private fun requiresAgent(input: String): Boolean {
-        val lower = input.lowercase()
-        return AGENT_VERBS.containsMatchIn(lower) || AGENT_PHRASES.any(lower::contains)
-    }
-
-    // Hybrid memory retrieval: semantic (embeddings) + lexical (keyword), fused with
-    // Reciprocal Rank Fusion so a fact strong in both signals outranks one strong in only one.
-    // Embeddings backfill a few facts per turn, so semantic recall warms up over the first messages.
-    private suspend fun selectRelevantFactsHybrid(query: String, facts: List<FactEntity>): List<FactEntity> {
+    // Hybrid memory retrieval: semantic similarity (embeddings) and keyword match give relevance;
+    // recency and confidence break ties (MemoryEngine.rankForContext). Facts relevant by neither
+    // signal are left out. Embeddings backfill one fact per turn, so semantic recall warms up.
+    private suspend fun selectRelevantFactsHybrid(
+        query: String,
+        facts: List<FactEntity>,
+        trace: RequestTrace
+    ): List<FactEntity> {
         if (facts.isEmpty()) return emptyList()
         val engine = MemoryEngine()
-        val lexicalRanked = engine.scoreMemories(query, facts).map { it.first }
-        val queryVec = aiRepo.embed(query)
-            ?: return lexicalRanked.take(6).ifEmpty { engine.selectRelevantMemories(query, facts) }
+        val now = System.currentTimeMillis()
+        val queryVec = trace.embedding { aiRepo.embed(query) }
+            ?: return engine.rankForContext(query, facts, emptyMap(), now)
         val vectors = factEmbeddingRepo.getAll().toMutableMap()
         // Backfill at most one missing vector per turn. Four sequential embedding calls
         // made agent requests feel stalled on slower networks; lexical ranking remains the
@@ -269,7 +350,7 @@ class JaxRepository(context: Context) {
         var backfilled = 0
         for (f in facts) {
             if (!vectors.containsKey(f.id) && backfilled < 1) {
-                val v = aiRepo.embed("${f.title}. ${f.details}")
+                val v = trace.embedding { aiRepo.embed("${f.title}. ${f.details}") }
                 if (v != null) {
                     factEmbeddingRepo.save(f.id, v)
                     vectors[f.id] = v
@@ -277,13 +358,8 @@ class JaxRepository(context: Context) {
                 }
             }
         }
-        val semanticRanked = facts
-            .mapNotNull { f -> vectors[f.id]?.let { f to VectorUtils.cosine(queryVec, it) } }
-            .filter { it.second > 0.3f }
-            .sortedByDescending { it.second }
-            .map { it.first }
-        val fused = engine.fuseByReciprocalRank(listOf(semanticRanked, lexicalRanked)).take(6)
-        return fused.ifEmpty { engine.selectRelevantMemories(query, facts) }
+        val semantic = facts.mapNotNull { f -> vectors[f.id]?.let { f.id to VectorUtils.cosine(queryVec, it) } }.toMap()
+        return engine.rankForContext(query, facts, semantic, now)
     }
 
     suspend fun getChatHistory(): List<ChatMessageEntity> = chatRepo.getHistory()
@@ -330,18 +406,4 @@ class JaxRepository(context: Context) {
 
     suspend fun generateDailyPlan(openTasks: List<TaskEntity>, currentDate: String): String =
         aiRepo.generateDailyPlan(getSelectedModel(), openTasks, currentDate)
-
-    private companion object {
-        const val AGENT_MAX_STEPS = 6
-        const val STATUS_COMPLETED = "COMPLETED"
-        const val STATUS_COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS"
-        const val STATUS_FAILED = "FAILED"
-
-        // Whole-word action verbs, so e.g. "address" no longer matches "add".
-        val AGENT_VERBS = Regex(
-            "\\b(create|add|make|remind|schedule|set|complete|finish|delete|remove|cancel|" +
-                "open|launch|call|dial|navigate|link)\\b"
-        )
-        val AGENT_PHRASES = listOf("search my", "find my", "organize my", "save this", "remember this", "update my profile")
-    }
 }

@@ -19,7 +19,8 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         conversationSummary: String,
         currentDate: String,
         userProfile: String = "",
-        learnedWorkflows: List<String> = emptyList()
+        learnedWorkflows: List<String> = emptyList(),
+        workingState: String = ""
     ): AssembledContext {
         val facts = if (relevantFacts.isEmpty()) "None" else boundedLines(relevantFacts.map(::factLine), FACTS_BUDGET)
         val tasks = if (openTasks.isEmpty()) "None" else boundedLines(openTasks.map(::taskLine), TASKS_BUDGET)
@@ -27,6 +28,8 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         val convo = if (conversationSummary.isBlank()) "" else
             "\nRECENT CONVERSATION:\n${truncate(conversationSummary, CONVERSATION_BUDGET)}"
 
+        val workingLine = if (workingState.isBlank()) "" else
+            "CURRENT TASK STATE:\n${truncate(workingState, WORKING_BUDGET)}\n"
         val profileLine = if (userProfile.isBlank()) "" else
             "USER PROFILE:\n${truncate(userProfile, PROFILE_BUDGET)}\n"
         val workflowLine = if (learnedWorkflows.isEmpty()) "" else
@@ -36,7 +39,7 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         val text = """
             USER: $userName
             TODAY: $currentDate
-            ${profileLine}${workflowLine}KNOWN FACTS:
+            ${workingLine}${profileLine}${workflowLine}KNOWN FACTS:
             $facts
             OPEN TASKS:
             $tasks$convo
@@ -98,6 +101,7 @@ class ContextAssembler(private val userName: String = "Jagadeesh") {
         const val TASKS_BUDGET = 1_050
         const val PROFILE_BUDGET = 750
         const val WORKFLOWS_BUDGET = 450
+        const val WORKING_BUDGET = 600
         const val CONVERSATION_BUDGET = 700
         const val ITEM_BUDGET = 500
 

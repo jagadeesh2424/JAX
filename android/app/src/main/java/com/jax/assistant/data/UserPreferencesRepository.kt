@@ -2,8 +2,10 @@ package com.jax.assistant.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.jax.assistant.ai.AiBackend
 import com.jax.assistant.ai.agent.AutonomyLevel
 import com.jax.assistant.config.AppConfig
+import com.jax.assistant.notify.NotificationKind
 
 // Owns all persisted user settings (API key, selected model, developer mode).
 class UserPreferencesRepository(context: Context) {
@@ -23,6 +25,13 @@ class UserPreferencesRepository(context: Context) {
 
     fun saveSelectedModel(modelName: String) {
         prefs.edit().putString("selected_ai_model", modelName.trim()).apply()
+    }
+
+    fun getAiBackend(): AiBackend =
+        runCatching { AiBackend.valueOf(prefs.getString("ai_backend", null) ?: "") }.getOrDefault(AiBackend.AUTO)
+
+    fun setAiBackend(backend: AiBackend) {
+        prefs.edit().putString("ai_backend", backend.name).apply()
     }
 
     fun isDeveloperMode(): Boolean = prefs.getBoolean("developer_mode", false)
@@ -64,6 +73,13 @@ class UserPreferencesRepository(context: Context) {
 
     fun setProactiveAutonomyLevel(level: AutonomyLevel) {
         prefs.edit().putString("proactive_autonomy_level", level.name).apply()
+    }
+
+    // Reminders and attention-needed notifications are always allowed (NotificationKind.alwaysAllowed).
+    fun notificationsEnabled(kind: NotificationKind): Boolean = when (kind) {
+        NotificationKind.INSIGHT -> isDailyAutomationEnabled()
+        NotificationKind.AGENT_RESULT -> prefs.getBoolean("notify_agent_results", true)
+        NotificationKind.REMINDER, NotificationKind.ATTENTION -> true
     }
 
     fun clearAll() {

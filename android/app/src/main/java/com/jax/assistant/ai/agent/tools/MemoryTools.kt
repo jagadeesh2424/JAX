@@ -4,6 +4,7 @@ import com.jax.assistant.ai.agent.JaxTool
 import com.jax.assistant.ai.agent.ToolParam
 import com.jax.assistant.ai.agent.ToolResult
 import com.jax.assistant.ai.agent.ToolRisk
+import com.jax.assistant.ai.agent.Verification
 import com.jax.assistant.data.MemoryRepository
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,18 +19,33 @@ class StoreMemoryTool(private val memory: MemoryRepository) : JaxTool {
         ToolParam("details", "string", "The full fact/memory content", true)
     )
     override val isDestructive = false
+    override val writesDurableMemory = true
 
     override suspend fun execute(args: JSONObject): ToolResult {
         val title = args.optString("title").trim()
         val details = args.optString("details").trim()
-        if (title.isBlank() || details.isBlank()) return ToolResult.error("title and details are required")
-        val fact = memory.createManualFact(
+        if (title.isBlank() || details.isBlank()) return ToolResult.fatal("title and details are required")
+        val saved = memory.upsertFact(
             title = title,
             category = args.optString("category", "Personal").ifBlank { "Personal" },
             details = details
         )
-        return ToolResult.ok("Saved memory \"${fact.title}\".")
+        val message = when (saved.outcome) {
+            MemoryRepository.UpsertOutcome.CREATED -> "Saved memory \"${saved.fact.title}\"."
+            MemoryRepository.UpsertOutcome.UPDATED -> "Updated memory \"${saved.fact.title}\"."
+            MemoryRepository.UpsertOutcome.UNCHANGED -> "I already had \"${saved.fact.title}\" saved."
+        }
+        return ToolResult.ok(message, JSONObject().put("fact_id", saved.fact.id).put("details", details))
     }
+
+    override suspend fun verify(args: JSONObject, result: ToolResult): Verification {
+        val stored = memory.getFact(result.data?.optString("fact_id").orEmpty())
+        return if (stored != null && stored.details == result.data?.optString("details")) Verification.verified("fact stored")
+        else Verification.failed("fact was not stored")
+    }
+
+    override suspend fun alreadyDone(args: JSONObject): Boolean =
+        memory.searchFactsSnapshot(args.optString("title").trim()).any { it.details == args.optString("details").trim() }
 }
 
 // Search saved facts/memories by keyword.

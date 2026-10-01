@@ -11,6 +11,7 @@ import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.LiveSession
 import com.google.firebase.ai.type.PublicPreviewAPI
 import com.google.firebase.ai.type.ResponseModality
+import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.liveGenerationConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -31,7 +32,8 @@ class GeminiLiveVoiceProvider(
     private val onOutputTranscript: (String) -> Unit,
     private val onActiveChanged: (Boolean) -> Unit,
     private val onError: (String) -> Unit,
-    private val functionCallHandler: ((FunctionCallPart) -> FunctionResponsePart)? = null
+    private val functionCallHandler: ((FunctionCallPart) -> FunctionResponsePart)? = null,
+    private val systemInstruction: () -> String = { "" }
 ) : VoiceProvider {
 
     enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR }
@@ -88,13 +90,15 @@ class GeminiLiveVoiceProvider(
     @SuppressLint("MissingPermission")
     private suspend fun connectAndStart() {
         session?.let { runCatching { it.close() } }
+        val instruction = systemInstruction().trim()
         val liveModel = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel(
             modelName = MODEL_NAME,
             generationConfig = liveGenerationConfig {
                 responseModality = ResponseModality.AUDIO
                 inputAudioTranscription = AudioTranscriptionConfig()
                 outputAudioTranscription = AudioTranscriptionConfig()
-            }
+            },
+            systemInstruction = if (instruction.isEmpty()) null else content { text(instruction) }
         )
         val newSession = liveModel.connect()
         if (stopped) {

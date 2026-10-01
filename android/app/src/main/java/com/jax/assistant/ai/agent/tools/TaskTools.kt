@@ -4,9 +4,38 @@ import com.jax.assistant.ai.agent.JaxTool
 import com.jax.assistant.ai.agent.ToolParam
 import com.jax.assistant.ai.agent.ToolResult
 import com.jax.assistant.ai.agent.ToolRisk
+import com.jax.assistant.ai.agent.Verification
 import com.jax.assistant.data.TaskRepository
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
+import java.util.Locale
+
+data class TaskRequest(val title: String, val deadline: LocalDate?)
+
+// Deterministic parser for explicit task commands ("create a task to X [day]", "remind me to X
+// tomorrow" with no time). Returns null for anything that needs judgement (questions, "decide",
+// "which", "best"...) or lacks the needed details, so those go to Gemini instead.
+object TaskParser {
+    private val createTrigger = Regex(
+        "^(?:please\\s+)?(?:create|add|make)\\s+(?:a\\s+|an\\s+)?(?:new\\s+)?(?:task|to-?do)\\s*(?:to|for|:)?\\s+(.+)$"
+    )
+    private val remindTrigger = Regex("^(?:please\\s+)?remind me\\s+(?:to\\s+)?(.+)$")
+    private val needsReasoning = Regex("\\b(decide|figure out|work out|which|whether|best|should|suggest|recommend)\\b|\\?")
+
+    fun parse(input: String, today: LocalDate): TaskRequest? {
+        val lower = input.trim().lowercase(Locale.US).trimEnd('.', '!')
+        val create = createTrigger.find(lower)?.groupValues?.get(1)?.trim()
+        val remind = if (create == null) remindTrigger.find(lower)?.groupValues?.get(1)?.trim() else null
+        val body = create ?: remind ?: return null
+        if (needsReasoning.containsMatchIn(body)) return null
+        val (deadline, rest) = ReminderParser.extractDate(body, today) ?: return null
+        // "Remind me to X" with no day is ambiguous (when?), so let Gemini ask.
+        if (remind != null && deadline == null) return null
+        val title = ReminderParser.extractTitle(rest)
+        return if (title == "Reminder") null else TaskRequest(ReminderParser.restoreCasing(input.trim(), title), deadline)
+    }
+}
 
 // Create a new task/reminder.
 class CreateTaskTool(private val tasks: TaskRepository) : JaxTool {
@@ -29,7 +58,25 @@ class CreateTaskTool(private val tasks: TaskRepository) : JaxTool {
             priority = args.optString("priority", "MED").ifBlank { "MED" }.uppercase(),
             deadline = args.optString("deadline", "").ifBlank { null }
         )
-        return ToolResult.ok("Created task \"${task.title}\" (id ${task.id}).")
+        return ToolResult.ok(
+            "Created task \"${task.title}\" (id ${task.id}).",
+            JSONObject().put("task_id", task.id).put("deadline", task.deadline ?: "")
+        )
+    }
+
+    override suspend fun verify(args: JSONObject, result: ToolResult): Verification {
+        val id = result.data?.optString("task_id").orEmpty()
+        val stored = tasks.getAllTasksSnapshot().firstOrNull { it.id == id }
+            ?: return Verification.failed("the task was not saved")
+        val wantedDeadline = args.optString("deadline", "").ifBlank { null }
+        return if (stored.deadline == wantedDeadline) Verification.verified("task saved")
+        else Verification.failed("task saved with the wrong due date")
+    }
+
+    override suspend fun alreadyDone(args: JSONObject): Boolean {
+        val title = args.optString("title").trim()
+        val deadline = args.optString("deadline", "").ifBlank { null }
+        return tasks.getAllTasksSnapshot().any { it.title.equals(title, ignoreCase = true) && it.deadline == deadline }
     }
 }
 
@@ -75,6 +122,10 @@ class CompleteTaskTool(private val tasks: TaskRepository) : JaxTool {
     )
     override val isDestructive = true
 
+    // Marking done is a reversible write; deleting is irreversible and always needs consent.
+    override fun riskFor(args: JSONObject): ToolRisk =
+        if (args.optBoolean("remove", false)) ToolRisk.DESTRUCTIVE else ToolRisk.LOW_WRITE
+
     override suspend fun execute(args: JSONObject): ToolResult {
         val id = args.optString("id").trim()
         if (id.isBlank()) return ToolResult.error("id is required (call search_tasks first)")
@@ -86,6 +137,16 @@ class CompleteTaskTool(private val tasks: TaskRepository) : JaxTool {
         } else {
             tasks.updateTask(target.copy(isCompleted = true))
             ToolResult.ok("Marked \"${target.title}\" as completed.")
+        }
+    }
+
+    override suspend fun verify(args: JSONObject, result: ToolResult): Verification {
+        val stored = tasks.getAllTasksSnapshot().firstOrNull { it.id == args.optString("id").trim() }
+        return when {
+            args.optBoolean("remove", false) ->
+                if (stored == null) Verification.verified("task deleted") else Verification.failed("task still exists")
+            stored?.isCompleted == true -> Verification.verified("task marked completed")
+            else -> Verification.failed("task is not marked completed")
         }
     }
 }

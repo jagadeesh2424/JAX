@@ -53,6 +53,11 @@ android {
     }
 }
 
+// Exported schemas (commit android/app/schemas/) let future migrations be tested against real history.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     // Core AndroidX & Material
     implementation("androidx.core:core-ktx:1.12.0")

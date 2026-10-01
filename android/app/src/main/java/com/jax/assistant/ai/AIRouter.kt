@@ -3,6 +3,7 @@ package com.jax.assistant.ai
 import android.content.Context
 import android.util.Log
 import com.jax.assistant.config.AppConfig
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,7 +15,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 private const val TAG = "AIRouter"
 
-class AIRouter(context: Context? = null) {
+class AIRouter(
+    context: Context? = null,
+    private val restClient: ModelClient = GeminiRestClient(),
+    private val firebaseClient: ModelClient = FirebaseAiClient(),
+    // Replaceable so routing and fallback are unit-tested without network discovery.
+    private val discoverModels: suspend (apiKey: String) -> List<ModelInfo> = { key -> ModelCatalog.discoverModels(key) }
+) {
 
     private val healthStore: ModelHealthStore? = context?.let { ModelHealthStore(it.applicationContext) }
     private val providers = ConcurrentHashMap<String, AIProvider>()
@@ -28,6 +35,13 @@ class AIRouter(context: Context? = null) {
 
     @Volatile
     private var activeModel: String = AppConfig.DEFAULT_MODEL
+
+    @Volatile
+    var backend: AiBackend = AiBackend.AUTO
+
+    // Set once Firebase AI Logic reports it is not configured, so AUTO stops trying it this session.
+    @Volatile
+    private var firebaseUnavailable = false
 
     init {
         // Register default Gemini provider
@@ -52,7 +66,7 @@ class AIRouter(context: Context? = null) {
             val isExpired = healthStore?.isDiscoveryExpired() ?: true
             if (!force && !isExpired && models.isNotEmpty()) return
 
-            val discovered = ModelCatalog.discoverModels(apiKey)
+            val discovered = discoverModels(apiKey)
             if (discovered.isEmpty()) return
 
             val existingMap = models.associateBy { it.id }
@@ -86,7 +100,37 @@ class AIRouter(context: Context? = null) {
         requestedModel: String = "",
         capability: TaskCapability = TaskCapability.GENERAL_CONVERSATION,
         requireJson: Boolean = true
-    ): String {
+    ): String = routeRequest(
+        ModelRequest(messages = listOf(ModelMessage.user(prompt)), json = requireJson),
+        apiKey,
+        requestedModel,
+        capability
+    ).text
+
+    // True when the configured backend can run Gemini's native function calling for this key.
+    fun nativeToolsAvailable(apiKey: String): Boolean = primaryClient(apiKey, needsTools = true).supportsTools
+
+    fun backendName(apiKey: String): String = primaryClient(apiKey, needsTools = false).name
+
+    private fun primaryClient(apiKey: String, needsTools: Boolean): ModelClient = when (backend) {
+        AiBackend.FIREBASE -> firebaseClient
+        AiBackend.DIRECT -> restClient
+        AiBackend.AUTO -> when {
+            needsTools && apiKey.isNotBlank() -> restClient
+            firebaseUnavailable && apiKey.isNotBlank() -> restClient
+            else -> firebaseClient
+        }
+    }
+
+    // Every model call goes through here: model choice (health, cooldown, capability), bounded
+    // fallback, backend selection, request logs and per-request token accounting.
+    suspend fun routeRequest(
+        request: ModelRequest,
+        apiKey: String,
+        requestedModel: String = "",
+        capability: TaskCapability = TaskCapability.GENERAL_CONVERSATION,
+        onText: ((String) -> Unit)? = null
+    ): ModelResponse {
         ensureModelDiscovery(apiKey, force = false)
 
         val now = System.currentTimeMillis()
@@ -97,6 +141,7 @@ class AIRouter(context: Context? = null) {
         )
 
         var lastHttpStatus: Int? = null
+        var lastErrorCode: String? = null
         var lastErrorMessage: String? = null
         var isQuotaExceededOccurred = false
         var attemptCount = 0
@@ -105,80 +150,108 @@ class AIRouter(context: Context? = null) {
         // Keep one fallback for a selected model and two for automatic routing.
         val maxCandidates = if (requestedModel.isNotBlank()) 2 else 3
         for (candidate in candidateModels.take(maxCandidates)) {
-            val provider = providers[candidate.provider] ?: providers["Gemini"]
-            if (provider == null) continue
-
+            var client = primaryClient(apiKey, needsTools = request.tools.isNotEmpty())
             attemptCount++
             val startTime = System.currentTimeMillis()
-            Log.d(TAG, "[Attempt $attemptCount] Routing request via model '${candidate.id}' (${provider.providerName})")
+            Log.d(TAG, "[Attempt $attemptCount] Routing request via model '${candidate.id}' (${client.name})")
 
-            val rawResult = provider.generate(prompt, candidate.id, apiKey, requireJson)
+            var attempt = client.generate(request.copy(model = candidate.id), apiKey, onText)
+            if (!attempt.isSuccess && attempt.errorCode == ModelAttempt.BACKEND_NOT_CONFIGURED &&
+                backend == AiBackend.AUTO && client === firebaseClient && apiKey.isNotBlank()
+            ) {
+                Log.w(TAG, "Firebase AI Logic unavailable; falling back to the Gemini API for this session.")
+                firebaseUnavailable = true
+                client = restClient
+                attempt = client.generate(request.copy(model = candidate.id), apiKey, onText)
+            }
             val latency = System.currentTimeMillis() - startTime
+            val response = attempt.response
 
-            if (rawResult.isSuccess && !rawResult.text.isNullOrBlank()) {
-                // Success path
+            if (response != null) {
                 activeModel = candidate.id
                 updateModelSuccess(candidate, latency, now)
                 logRequest(
                     RequestLog(
                         timestamp = now,
                         modelUsed = candidate.id,
-                        provider = provider.providerName,
+                        provider = client.name,
                         latencyMs = latency,
-                        httpStatus = 200,
+                        httpStatus = attempt.httpStatus ?: 200,
                         errorCode = null,
                         errorMessage = null,
                         retryCount = attemptCount - 1,
-                        isSuccess = true
+                        isSuccess = true,
+                        promptTokens = response.usage.promptTokens,
+                        outputTokens = response.usage.outputTokens
                     )
                 )
                 healthStore?.saveModels(models)
-                return rawResult.text
-            } else {
-                // Failure path
-                lastHttpStatus = rawResult.httpStatus
-                lastErrorMessage = rawResult.errorMessage
+                currentCoroutineContext()[UsageRecorder]?.record(response.usage)
+                return response
+            }
 
-                if (rawResult.httpStatus == 429 || rawResult.errorCode == "QUOTA_EXCEEDED") {
-                    isQuotaExceededOccurred = true
-                }
+            lastHttpStatus = attempt.httpStatus
+            lastErrorCode = attempt.errorCode
+            lastErrorMessage = attempt.errorMessage
+            if (attempt.httpStatus == 429 || attempt.errorCode == "QUOTA_EXCEEDED" || attempt.errorCode == "RESOURCE_EXHAUSTED") {
+                isQuotaExceededOccurred = true
+            }
 
-                updateModelFailure(candidate, rawResult, now)
-                logRequest(
-                    RequestLog(
-                        timestamp = now,
-                        modelUsed = candidate.id,
-                        provider = provider.providerName,
-                        latencyMs = latency,
-                        httpStatus = rawResult.httpStatus,
-                        errorCode = rawResult.errorCode,
-                        errorMessage = rawResult.errorMessage,
-                        retryCount = attemptCount - 1,
-                        isSuccess = false
-                    )
+            // A key/backend error says nothing about this model's health, so it is not penalized.
+            val modelFault = attempt.httpStatus != 401 && attempt.errorCode !in NOT_MODEL_FAULTS
+            if (modelFault) updateModelFailure(candidate, attempt.httpStatus, attempt.errorMessage, now)
+            logRequest(
+                RequestLog(
+                    timestamp = now,
+                    modelUsed = candidate.id,
+                    provider = client.name,
+                    latencyMs = latency,
+                    httpStatus = attempt.httpStatus,
+                    errorCode = attempt.errorCode,
+                    errorMessage = attempt.errorMessage,
+                    retryCount = attemptCount - 1,
+                    isSuccess = false
                 )
-                healthStore?.saveModels(models)
+            )
+            healthStore?.saveModels(models)
 
-                // If invalid API key, fail fast without trying other models
-                if (rawResult.httpStatus == 401 || rawResult.errorCode == "INVALID_API_KEY" || rawResult.errorCode == "MISSING_API_KEY") {
-                    throw AIException(AIError.InvalidApiKey)
-                }
+            // Key or backend problems affect every model: fail fast instead of trying others.
+            if (attempt.httpStatus == 401 || attempt.errorCode == "INVALID_API_KEY" || attempt.errorCode == "MISSING_API_KEY") {
+                throw AIException(AIError.InvalidApiKey)
+            }
+            if (attempt.errorCode == ModelAttempt.BACKEND_NOT_CONFIGURED) {
+                throw AIException(AIError.UnknownError(
+                    "Firebase AI Logic is not set up for this app. Enable it in the Firebase console, or add a Gemini API key in Settings."
+                ))
+            }
+            if (attempt.errorCode == ModelAttempt.TOOLS_UNSUPPORTED) {
+                throw AIException(AIError.UnknownError("The selected AI backend cannot run tools."))
             }
         }
 
-        // If all candidates failed:
         val finalError = when {
             isQuotaExceededOccurred || lastHttpStatus == 429 -> AIError.QuotaExceeded
             lastHttpStatus == 404 -> AIError.ModelNotFound
-            lastHttpStatus == 408 -> AIError.Timeout
-            lastErrorMessage?.contains("UnknownHostException", ignoreCase = true) == true ||
-                    lastErrorMessage?.contains("ConnectException", ignoreCase = true) == true -> AIError.NetworkError
+            lastHttpStatus == 408 || lastErrorCode == ModelAttempt.TIMEOUT -> AIError.Timeout
+            lastErrorCode == ModelAttempt.NETWORK -> AIError.NetworkError
             else -> AIError.UnknownError(lastErrorMessage ?: "All available AI models failed to respond.")
         }
         throw AIException(finalError)
     }
 
     suspend fun testConnection(apiKey: String, modelName: String = ""): TestConnectionResult {
+        if (primaryClient(apiKey, needsTools = false) === firebaseClient) {
+            return try {
+                val response = routeRequest(
+                    ModelRequest(messages = listOf(ModelMessage.user("Respond with 'OK' to verify connection."))),
+                    apiKey,
+                    modelName
+                )
+                TestConnectionResult(true, "${response.backend} connected (model '${response.modelId}').")
+            } catch (e: AIException) {
+                TestConnectionResult(false, e.error.userFriendlyMessage)
+            }
+        }
         ensureModelDiscovery(apiKey, force = false)
         val targetModel = modelName.ifBlank { activeModel }
         val provider = providers["Gemini"] ?: return TestConnectionResult(false, "Gemini provider unavailable.")
@@ -206,6 +279,9 @@ class AIRouter(context: Context? = null) {
     }
 
     suspend fun performHealthCheck(apiKey: String): String {
+        if (apiKey.isBlank()) {
+            return "Health check probes each model with a Gemini API key. With Firebase AI Logic, use Test Connection instead."
+        }
         ensureModelDiscovery(apiKey, force = false)
         var healthyCount = 0
         var totalTested = 0
@@ -231,11 +307,11 @@ class AIRouter(context: Context? = null) {
         model.averageLatency = if (model.averageLatency == 0L) latency else (model.averageLatency + latency) / 2
     }
 
-    private fun updateModelFailure(model: ModelInfo, result: ProviderRawResult, now: Long) {
+    private fun updateModelFailure(model: ModelInfo, httpStatus: Int?, errorMessage: String?, now: Long) {
         model.lastFailure = now
         model.failureCount++
 
-        when (result.httpStatus) {
+        when (httpStatus) {
             404 -> {
                 model.enabled = false
                 model.cooldownUntil = now + 86400000L
@@ -247,7 +323,7 @@ class AIRouter(context: Context? = null) {
             }
             500, 502, 503 -> {
                 model.cooldownUntil = now + 15000L
-                model.exclusionReason = "HTTP ${result.httpStatus}: Server error"
+                model.exclusionReason = "HTTP $httpStatus: Server error"
             }
             408 -> {
                 model.cooldownUntil = now + 30000L
@@ -255,7 +331,7 @@ class AIRouter(context: Context? = null) {
             }
             else -> {
                 model.cooldownUntil = now + 10000L
-                model.exclusionReason = "HTTP ${result.httpStatus ?: "ERR"}: ${result.errorMessage ?: "Failed"}"
+                model.exclusionReason = "HTTP ${httpStatus ?: "ERR"}: ${errorMessage ?: "Failed"}"
             }
         }
     }
@@ -266,5 +342,8 @@ class AIRouter(context: Context? = null) {
 
     private companion object {
         const val MAX_REQUEST_LOGS = 30
+        val NOT_MODEL_FAULTS = setOf(
+            "INVALID_API_KEY", "MISSING_API_KEY", ModelAttempt.BACKEND_NOT_CONFIGURED, ModelAttempt.TOOLS_UNSUPPORTED
+        )
     }
 }

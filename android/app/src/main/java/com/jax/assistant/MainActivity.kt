@@ -15,12 +15,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.work.*
-import com.jax.assistant.device.DeviceCommandParser
-import com.jax.assistant.device.DeviceController
+import com.jax.assistant.ai.agent.RequestMetrics
 import com.jax.assistant.ui.MainViewModel
 import com.jax.assistant.ui.screens.MainScreen
 import com.jax.assistant.ui.theme.JAXAssistantTheme
+import com.jax.assistant.voice.VoiceLatencyTracker
 import com.jax.assistant.voice.VoiceManager
+import com.jax.assistant.voice.VoiceModeSelector
 import com.jax.assistant.voice.GeminiLiveVoiceProvider
 import com.jax.assistant.worker.DailyAgentWorker
 import com.jax.assistant.worker.ConsolidationWorker
@@ -32,7 +33,9 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private lateinit var voiceManager: VoiceManager
     private lateinit var liveVoiceProvider: GeminiLiveVoiceProvider
-    private val deviceController by lazy { DeviceController(applicationContext) }
+    private val voiceLatency = VoiceLatencyTracker()
+    // When Gemini Live last failed; device speech recognition is used during the cool-down.
+    private var liveFailedAt = 0L
 
     private val requestMicPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -107,6 +110,8 @@ class MainActivity : ComponentActivity() {
                 val isAnalyzingImage by viewModel.isAnalyzingImage.collectAsState()
                 val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
                 val notice by viewModel.notice.collectAsState()
+                val streamingReply by viewModel.streamingReply.collectAsState()
+                val aiBackend by viewModel.aiBackend.collectAsState()
                 val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
                     uri?.let { viewModel.analyzeImage(it) }
                 }
@@ -255,7 +260,10 @@ class MainActivity : ComponentActivity() {
                     isAnalyzingImage = isAnalyzingImage,
                     onChooseVisionImage = { imagePicker.launch("image/*") },
                     pendingConfirmation = pendingConfirmation,
-                    onResolveConfirmation = { approved -> viewModel.resolveToolConfirmation(approved) }
+                    onResolveConfirmation = { approved -> viewModel.resolveToolConfirmation(approved) },
+                    streamingReply = streamingReply,
+                    aiBackend = aiBackend,
+                    onChangeAiBackend = { backend -> viewModel.setAiBackend(backend) }
                 )
             }
         }
@@ -269,10 +277,11 @@ class MainActivity : ComponentActivity() {
             onError = { message ->
                 viewModel.setListening(false)
                 runOnUiThread {
-                    // Firebase Live can disconnect because of auth, model availability, or
-                    // network conditions. Keep voice input usable through Android STT and
-                    // leave conversation mode so the app does not immediately reconnect.
-                    viewModel.setConversationMode(false)
+                    // Live can drop because of auth, model availability or network. Stay in
+                    // hands-free mode but use device speech recognition for a cool-down period, so
+                    // the user is never left without voice input.
+                    liveFailedAt = System.currentTimeMillis()
+                    android.util.Log.w("JaxVoice", "Gemini Live failed, using device voice input: $message")
                     Toast.makeText(
                         this,
                         "Live voice unavailable. Switching to device voice input.",
@@ -280,27 +289,39 @@ class MainActivity : ComponentActivity() {
                     ).show()
                     if (!isFinishing && !isDestroyed) voiceManager.startListening()
                 }
-            }
+            },
+            systemInstruction = { viewModel.liveSystemInstruction() }
         )
         voiceManager = VoiceManager(
             context = this,
             onSpeechResult = { text ->
+                voiceLatency.mark(VoiceLatencyTracker.Mark.TRANSCRIPTION)
                 viewModel.clearVoiceDraft()
-                handleUserInput(VoiceManager.stripWakePhrase(text))
+                handleUserInput(text)
             },
             onPartialSpeechResult = { text -> viewModel.setVoiceDraft(text) },
             onError = { message ->
+                voiceLatency.reset()
                 viewModel.setListening(false)
                 runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
             },
             onListeningStateChanged = { listening -> viewModel.setListening(listening) },
             onSpeakingStateChanged = { speaking ->
                 viewModel.setSpeaking(speaking)
+                if (speaking) {
+                    voiceLatency.mark(VoiceLatencyTracker.Mark.TTS_START)
+                } else {
+                    voiceLatency.mark(VoiceLatencyTracker.Mark.TTS_COMPLETE)
+                    voiceLatency.summary()?.let { android.util.Log.i("JaxVoice", it) }
+                    voiceLatency.totalMs()?.let { RequestMetrics.shared.recordVoiceLatency(it) }
+                    voiceLatency.reset()
+                }
                 // Hands-free: once J.A.X. finishes speaking, re-open the mic for the next turn.
                 if (!speaking && viewModel.conversationMode.value && !liveVoiceProvider.isActive()) {
                     runOnUiThread { if (!isFinishing && !isDestroyed) startVoiceInput() }
                 }
-            }
+            },
+            onSpeechStart = { voiceLatency.begin() }
         )
     }
 
@@ -311,19 +332,13 @@ class MainActivity : ComponentActivity() {
         if (!granted) requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    // Device commands (open app, call, search, navigate, alarm/timer) run locally; everything else goes to the AI.
+    // Typed and spoken input share one path: the pipeline normalizes, routes (device commands
+    // run as tools without Gemini) and applies the same permission and verification rules.
     private fun handleUserInput(input: String) {
         if (input.isBlank()) return
-        val command = DeviceCommandParser.parse(input)
-        if (command != null) {
-            android.util.Log.d("IntentRouter", "intent=${command::class.simpleName} execution=DeviceController geminiCall=false")
-            val reply = deviceController.execute(command)
-            viewModel.logAssistantAction(input, reply)
-            if (viewModel.voiceResponsesEnabled.value) voiceManager.speak(reply)
-        } else {
-            viewModel.sendMessage(input) { speechText ->
-                if (viewModel.voiceResponsesEnabled.value) voiceManager.speak(speechText)
-            }
+        viewModel.sendMessage(input) { speechText ->
+            voiceLatency.mark(VoiceLatencyTracker.Mark.RESPONSE)
+            if (viewModel.voiceResponsesEnabled.value) voiceManager.speak(speechText) else voiceLatency.reset()
         }
     }
 
@@ -344,8 +359,15 @@ class MainActivity : ComponentActivity() {
             requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        // Gemini Live needs conversation mode AND a Firebase sign-in; otherwise use local STT/TTS.
-        if (viewModel.conversationMode.value && viewModel.isFirebaseUserSignedIn()) {
+        // Barge-in: starting a new voice turn interrupts J.A.X. mid-sentence.
+        if (voiceManager.isSpeaking()) voiceManager.stopSpeaking()
+        val mode = VoiceModeSelector.select(
+            conversationMode = viewModel.conversationMode.value,
+            signedIn = viewModel.isFirebaseUserSignedIn(),
+            liveFailedAt = liveFailedAt,
+            nowMillis = System.currentTimeMillis()
+        )
+        if (mode == VoiceModeSelector.Mode.LIVE) {
             liveVoiceProvider.start()
         } else {
             voiceManager.startListening()
@@ -434,6 +456,13 @@ class MainActivity : ComponentActivity() {
             if (!after(now)) add(java.util.Calendar.WEEK_OF_YEAR, 1)
         }
         return next.timeInMillis - now.timeInMillis
+    }
+
+    // Leaving the screen releases the microphone and ends any Live session (Android restricts
+    // background mic use); the conversation state itself is kept in working memory.
+    override fun onStop() {
+        super.onStop()
+        if (viewModel.isListening.value || liveVoiceProvider.isActive()) stopVoiceInput()
     }
 
     override fun onDestroy() {

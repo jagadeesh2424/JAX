@@ -12,8 +12,8 @@ interface AgentRunDao {
 
     @Query(
         "UPDATE agent_runs SET status = :status, reply = :reply, toolsUsed = :toolsUsed, " +
-            "currentStep = :currentStep, recoveryState = :recoveryState, finishedAt = :finishedAt " +
-            "WHERE id = :runId"
+            "currentStep = :currentStep, recoveryState = :recoveryState, finishedAt = :finishedAt, " +
+            "updatedAt = :updatedAt WHERE id = :runId"
     )
     suspend fun updateProgress(
         runId: String,
@@ -22,11 +22,26 @@ interface AgentRunDao {
         toolsUsed: String,
         currentStep: Int,
         recoveryState: String,
-        finishedAt: Long
+        finishedAt: Long,
+        updatedAt: Long
     )
 
-    @Query("SELECT * FROM agent_runs WHERE status = 'RUNNING' ORDER BY startedAt DESC")
+    // Runs a process death left in an active state.
+    @Query("SELECT * FROM agent_runs WHERE status IN ('CREATED', 'PLANNING', 'RUNNING', 'WAITING') ORDER BY startedAt DESC")
     suspend fun recoverableRuns(): List<AgentRunEntity>
+
+    @Query("UPDATE agent_runs SET plan = :plan, currentStep = :currentStep, updatedAt = :updatedAt WHERE id = :runId")
+    suspend fun updatePlan(runId: String, plan: String, currentStep: Int, updatedAt: Long)
+
+    @Query("UPDATE agent_runs SET status = :status, updatedAt = :updatedAt WHERE id = :runId")
+    suspend fun updateStatus(runId: String, status: String, updatedAt: Long)
+
+    // Most recent interrupted/cancelled run that has a structured plan to continue from.
+    @Query(
+        "SELECT * FROM agent_runs WHERE status IN ('INTERRUPTED', 'CANCELLED') AND plan != '' " +
+            "AND startedAt >= :since ORDER BY startedAt DESC LIMIT 1"
+    )
+    suspend fun latestResumableRun(since: Long): AgentRunEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEvent(event: AgentEventEntity)

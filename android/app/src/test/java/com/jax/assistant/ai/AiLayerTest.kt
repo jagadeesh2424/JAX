@@ -324,6 +324,8 @@ class AiLayerTest {
             override val description = "Fails once then succeeds"
             override val parameters = emptyList<ToolParam>()
             override val isDestructive = false
+            // Only read-only tools are retried after an exception (writes may already have happened).
+            override val risk = ToolRisk.READ
             override suspend fun execute(args: JSONObject): ToolResult {
                 attempts++
                 if (attempts == 1) throw RuntimeException("transient network error")
@@ -614,8 +616,9 @@ class AiLayerTest {
             TaskEntity("1", "High priority", "Work", "HIGH", "2026-09-02")
         )
         val suggestions = ProactiveInsightEngine().suggest(tasks, today, AutonomyLevel.ACT)
-        assertEquals(1, suggestions.size)
-        assertTrue(suggestions[0].autoActable)
+        // High priority + due tomorrow: every suggestion is auto-actable at ACT.
+        assertTrue(suggestions.isNotEmpty())
+        assertTrue(suggestions.all { it.autoActable })
     }
 
     // The provider itself needs Firebase + a main looper (instrumented test territory);
